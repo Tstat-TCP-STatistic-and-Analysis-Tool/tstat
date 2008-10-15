@@ -1,0 +1,2 @@
+all:
+	./README.pl
