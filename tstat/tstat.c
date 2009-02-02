@@ -102,7 +102,6 @@ int tot_internal_netsv6;
 int contr_flag = 0;
 #endif
 
-
 /* option flags and default values */
 Bool live_flag = FALSE;
 
@@ -146,6 +145,17 @@ struct L4_bitrates L4_bitrate;
 struct L7_bitrates L7_bitrate;
 struct L7_bitrates L7_udp_bitrate;
 
+#ifdef L3_BITRATE
+unsigned long long L3_bitrate_in;
+unsigned long long L3_bitrate_out;
+unsigned long long L3_bitrate_loc;
+unsigned long long L3_bitrate_ip46_in;
+unsigned long long L3_bitrate_ip46_out;
+unsigned long long L3_bitrate_ip46_loc;
+struct timeval L3_last_time;
+#define L3_BITRATE_DELTA 10000000   /* 10 sec */
+#endif
+
 static u_long pcount = 0;   //global packet counter
 static u_long fpnum = 0;    //per file packet counter
 static int file_count = 0;
@@ -168,6 +178,9 @@ Bool bayes_engine = FALSE;	    /* -B */
 Bool runtime_engine = FALSE;    /* -T */
 Bool rrd_engine = FALSE;
 Bool histo_engine_log = TRUE;
+#ifdef L3_BITRATE
+Bool l3_engine_log = FALSE;   /* -3 */
+#endif
 
 int log_version = 2;            /* -1 */
 
@@ -226,6 +239,9 @@ FILE *fp_chat_log_msg = NULL;
 #ifdef MSN_OTHER_COMMANDS
 FILE *fp_msn_log_othercomm = NULL;
 #endif
+#endif
+#ifdef L3_BITRATE
+FILE *fp_l3bitrate = NULL;
 #endif
 
 /* LM */
@@ -313,13 +329,17 @@ Help (void)
     "\t-N file: specify the file name which contains the\n"
     "\t         description of the internal networks.\n"
     "\t         This file must contain the subnets that will be\n"
-    "\t         considered as 'internal' during the analysis\n"
-    "\t         Each subnet must be specified using network IP address\n"
-    "\t         on the first line and NETMASK on the next line:\n"
-    "\t         130.192.0.0\n"
-    "\t         255.255.0.0\n"
-    "\t         193.204.134.0\n"
-    "\t         255.255.255.0\n"
+    "\t         considered as 'internal' during the analysis.\n"
+    "\t         Each subnet can be specified in one of the following types:\n"
+    "\t         - <Network IP/NetMask> on a single line \n"
+    "\t             130.192.0.0/255.255.0.0\n"
+    "\t         - <Network IP/MaskLen> on a single line \n"
+    "\t             130.192.0.0/16\n"
+    "\t         - Pairs of lines with <Network IP> and <NetMask>\n"
+    "\t             130.192.0.0\n"
+    "\t             255.255.0.0\n"
+    "\t         If the option is not specified all networks are\n"
+    "\t         considered internal\n"
     "\n"
 	"\t-H ?: print internal histograms names and definitions\n"
     "\t-H file: Read histogram configuration from file\n"
@@ -371,6 +391,9 @@ Help (void)
     "\t--dag: enable live capture using Endace DAG cards. The\n"
 	"\t       list of device_name can contain at most four names\n"
 #endif /* GROK_ERF_LIVE */
+#ifdef L3_BITRATE
+    "\t-3: collect separate IP bitrate log (log_l3_bitrate)\n"
+#endif
 
     "\t-f filterfile: specifies the libpcap filter file. Syntax as in tcpdump\n"
     "\n"
@@ -776,6 +799,19 @@ create_new_outfiles (char *filename)
 	  fprintf (fp_stderr, "Could not open file %s\n", logfile);
 	}
   #endif
+  #ifdef L3_BITRATE
+    if (l3_engine_log)
+     {
+      sprintf (logfile, "%s/%s", basename, "log_l3_bitrate");
+      if (fp_l3bitrate != NULL)
+	fclose (fp_l3bitrate);
+      fp_l3bitrate = fopen (logfile, "w");
+      if (fp_l3bitrate == NULL)
+	{
+	  fprintf (fp_stderr, "Could not open file %s\n", logfile);
+	}
+     }
+  #endif
 
 #endif
 
@@ -799,7 +835,61 @@ create_new_outfiles (char *filename)
         dump_create_outdir(basename);
 }
 
+void ip_histo_stat(struct ip *pip)
+{
+  /* Code for the update of IP histograms */
+  
+  if (internal_src && !internal_dst)
+    {
+      L4_bitrate.out[IP_TYPE] += ntohs (pip->ip_len);
+      if (pip->ip_p == IPPROTO_ICMP)
+    	L4_bitrate.out[ICMP_TYPE] += ntohs (pip->ip_len);
+      add_histo (ip_protocol_out, pip->ip_p);
+      add_histo (ip_len_out, (float) ntohs (pip->ip_len));
+      add_histo (ip_ttl_out, (float) pip->ip_ttl);
+      add_histo (ip_tos_out, (float) pip->ip_tos);
+#ifdef L3_BITRATE
+      L3_bitrate_out += ntohs (pip->ip_len);
+      L3_bitrate_ip46_out += max(ntohs(pip->ip_len),46);
+#endif
+    }
+  else if (!internal_src && internal_dst)
+    {
+      L4_bitrate.in[IP_TYPE] += ntohs (pip->ip_len);
+      if (pip->ip_p == IPPROTO_ICMP)
+    	L4_bitrate.in[ICMP_TYPE] += ntohs (pip->ip_len);
+      add_histo (ip_protocol_in, pip->ip_p);
+      add_histo (ip_len_in, (float) ntohs (pip->ip_len));
+      add_histo (ip_ttl_in, (float) pip->ip_ttl);
+      add_histo (ip_tos_in, (float) pip->ip_tos);
+#ifdef L3_BITRATE
+      L3_bitrate_in += ntohs (pip->ip_len);
+      L3_bitrate_ip46_in += max(ntohs(pip->ip_len),46);
+#endif
+    }
+  else if (internal_src && internal_dst)
+    {
+      L4_bitrate.loc[IP_TYPE] += ntohs (pip->ip_len);
+      if (pip->ip_p == IPPROTO_ICMP)
+    	L4_bitrate.loc[ICMP_TYPE] += ntohs (pip->ip_len);
+      add_histo (ip_protocol_loc, pip->ip_p);
+      add_histo (ip_len_loc, (float) ntohs (pip->ip_len));
+      add_histo (ip_ttl_loc, (float) pip->ip_ttl);
+      add_histo (ip_tos_loc, (float) pip->ip_tos);
+#ifdef L3_BITRATE
+      L3_bitrate_loc += ntohs (pip->ip_len);
+      L3_bitrate_ip46_loc += max(ntohs(pip->ip_len),46);
+#endif
+    }
 
+
+   if (adx_engine)
+    {
+      add_adx (&(pip->ip_src), SRC_ADX);
+      add_adx (&(pip->ip_dst), DST_ADX);
+    }
+    
+} 
 
 inline static int
 ip_header_stat (int phystype, 
@@ -856,43 +946,14 @@ ip_header_stat (int phystype,
 	}
 
       /* .a.c. */
-      if (internal_src && !internal_dst)
-	{
-	  L4_bitrate.out[IP_TYPE] += ntohs (pip->ip_len);
-	  if (pip->ip_p == IPPROTO_ICMP)
-	    L4_bitrate.out[ICMP_TYPE] += ntohs (pip->ip_len);
-	  add_histo (ip_protocol_out, pip->ip_p);
-	  add_histo (ip_len_out, (float) ntohs (pip->ip_len));
-	  add_histo (ip_ttl_out, (float) pip->ip_ttl);
-	  add_histo (ip_tos_out, (float) pip->ip_tos);
-	}
-      else if (!internal_src && internal_dst)
-	{
-	  L4_bitrate.in[IP_TYPE] += ntohs (pip->ip_len);
-	  if (pip->ip_p == IPPROTO_ICMP)
-	    L4_bitrate.in[ICMP_TYPE] += ntohs (pip->ip_len);
-	  add_histo (ip_protocol_in, pip->ip_p);
-	  add_histo (ip_len_in, (float) ntohs (pip->ip_len));
-	  add_histo (ip_ttl_in, (float) pip->ip_ttl);
-	  add_histo (ip_tos_in, (float) pip->ip_tos);
-	}
-      else if (internal_src && internal_dst)
-	{
-	  L4_bitrate.loc[IP_TYPE] += ntohs (pip->ip_len);
-	  if (pip->ip_p == IPPROTO_ICMP)
-	    L4_bitrate.loc[ICMP_TYPE] += ntohs (pip->ip_len);
-	  add_histo (ip_protocol_loc, pip->ip_p);
-	  add_histo (ip_len_loc, (float) ntohs (pip->ip_len));
-	  add_histo (ip_ttl_loc, (float) pip->ip_ttl);
-	  add_histo (ip_tos_loc, (float) pip->ip_tos);
-	}
-
-
-      if (adx_engine)
-	{
-	  add_adx (&(pip->ip_src), SRC_ADX);
-	  add_adx (&(pip->ip_dst), DST_ADX);
-	}
+      
+      /* 
+         Histograms done only if packet is not duplicated, 
+         so code is executed in ProcessPacket after the TCP/UDP processing
+      */
+      
+      /* ip_histo_stat(pip); */
+      
 #ifdef SUPPORT_IPV6
     }
 #endif
@@ -1005,8 +1066,43 @@ ip_header_stat (int phystype,
 
   /* keep track of global times */
   if (ZERO_TIME (&first_packet))
-    first_packet = current_time;
+   {
+     first_packet = current_time;
+#ifdef L3_BITRATE
+     L3_last_time = current_time;
+     L3_bitrate_in=0;
+     L3_bitrate_out=0;
+     L3_bitrate_loc=0;
+     L3_bitrate_ip46_in=0;
+     L3_bitrate_ip46_out=0;
+     L3_bitrate_ip46_loc=0;
+#endif
+   }
   last_packet = current_time;
+
+#ifdef L3_BITRATE
+  if (elapsed (L3_last_time, current_time) > L3_BITRATE_DELTA)
+   {
+     double L3_delta = elapsed (L3_last_time, current_time);
+     if (log_engine && l3_engine_log)
+        fprintf(fp_l3bitrate,"%.6f %.2f %.2f %.2f %.2f %.2f %.2f\n",
+            (double)current_time.tv_sec + (double) current_time.tv_usec / 1000000.0,
+             L3_bitrate_in*8.0/L3_delta*1000.,
+             L3_bitrate_out*8.0/L3_delta*1000.,
+             L3_bitrate_loc*8.0/L3_delta*1000.,
+             L3_bitrate_ip46_in*8.0/L3_delta*1000.,
+             L3_bitrate_ip46_out*8.0/L3_delta*1000.,
+             L3_bitrate_ip46_loc*8.0/L3_delta*1000.
+	     );
+     L3_bitrate_in=0;
+     L3_bitrate_out=0;
+     L3_bitrate_loc=0;
+     L3_bitrate_ip46_in=0;
+     L3_bitrate_ip46_out=0;
+     L3_bitrate_ip46_loc=0;
+     L3_last_time = current_time;     
+   }
+#endif
 
   return 1;			/*finished ok */
 }
@@ -1027,15 +1123,18 @@ void InitAfterFirstPacketReaded(char *filename, int file_count) {
     }
 
   // init struct that rely on the time of the current packets 
+  if ((con_cat == FALSE) || (file_count == 1))
+    {
 #ifdef MSN_CLASSIFIER
-  init_msn ();
+      init_msn ();
 #endif
 #ifdef YMSG_CLASSIFIER
-  init_ymsg ();
+      init_ymsg ();
 #endif
 #ifdef XMPP_CLASSIFIER
-  init_jabber ();
+      init_jabber ();
 #endif
+    }
 }
 
 
@@ -1053,9 +1152,8 @@ static int ProcessPacket(struct timeval *pckt_time,
                          long int location)
 {
     struct tcphdr *ptcp = NULL;
-    tcp_pair *ptp;
+    int flow_stat_code;
     struct udphdr *pudp;
-    udp_pair *pup = NULL;
     int dir;
     struct stat finfo;
     int stat_error;
@@ -1130,36 +1228,40 @@ static int ProcessPacket(struct timeval *pckt_time,
 */
 
     /* Statistics from LAYER 4 (TCP/UDP) HEADER */
-    /* Statistics from upper-layers are called as:
-     *     	proto_analyzer(pip, pproto, PROTOCOL_type, thisdir, dir, plast);
-     * from tcp_flow_stat and udp_flow_stat
-     */
-    if ((ptcp = tcp_header_stat (ptcp, pip, plast)) != NULL)
-    {
-        ptp = tcp_flow_stat (pip, ptcp, plast, &dir);
-        if (ptp == NULL)
-            return 0;
-        /* Topix: try to guess the upper level protocol */
-        /* FindConType: returns the type of connection, 0 if unknown */
-        // FindConType (ptp, pip, ptcp, plast, len, dir);
 
-        /* if it wasn't "interesting", we return NULL here */
+    flow_stat_code = FLOW_STAT_NONE;  /* No flow (and dup) check done yet */
 
-    }
+    if ( (ptcp = gettcp (pip, &plast)) != NULL)
+     {
+        ++tcp_packet_count;
+        flow_stat_code = tcp_flow_stat (pip, ptcp, plast, &dir);
+	if ( flow_stat_code!=FLOW_STAT_DUP && 
+	     flow_stat_code!=FLOW_STAT_SHORT )
+	   tcp_header_stat (ptcp, pip);
+     }	   
     else if (do_udp)
-    {
+     {
         /* look for a UDP header */
-        pudp = getudp (pip, &plast);
-        if (pudp != NULL)
-            pup = udp_flow_stat (pip, pudp, plast);
-        else {
-            return 0;
-        }
-    }
-    else
-    {
-        return 0;
-    }
+        if ((pudp = getudp (pip, &plast)) != NULL)
+	 { 
+           flow_stat_code = udp_flow_stat (pip, pudp, plast);
+	   if ( flow_stat_code!=FLOW_STAT_DUP && 
+	        flow_stat_code!=FLOW_STAT_SHORT )
+	      udp_header_stat (pudp, pip);
+	 }
+     }
+
+    if (flow_stat_code != FLOW_STAT_DUP)
+     {
+       if (!(PIP_ISV6 (pip)))
+        {
+          /* Collect IPv4 histograms only on not duplicated flows */
+          ip_histo_stat(pip);
+	} 
+     }
+
+    if (flow_stat_code != FLOW_STAT_OK)
+      return 0;
 
     //********************************************
     //* check if the runtime config file is changed
@@ -1959,6 +2061,23 @@ CheckArguments (int *pargc, char *argv[])
         BadArg (NULL, "must specify at least one file name\n");
     }
     */
+    if (net_conf == FALSE) {
+	    internal_net_mask[0] = 0;
+        inet_aton ("0.0.0.0", &(internal_net_list[0]));
+	    inet_aton ("0.0.0.0", &(internal_net_mask2[0]));
+        tot_internal_nets = 1;
+        if (debug)
+        {
+            fprintf (fp_stdout, "Adding: %s as internal net ",
+                    inet_ntoa (internal_net_list[0]));
+            fprintf (fp_stdout, "with mask %s (%u)\n", 
+                    inet_ntoa (internal_net_mask2[0]),
+                    internal_net_mask[0]);
+        }
+        fprintf(fp_stdout, 
+            "Warning: -N option not specified.\n"
+            "         All subnets are assumed to be internal\n");
+    }
 #ifdef HAVE_RRDTOOL
     /*-----------------------------------------------------------*/
     /* RRDtools                                                */
@@ -2031,7 +2150,7 @@ ParseArgs (int *pargc, char *argv[])
     c = getopt_long (*pargc, argv,
 		     GROK_TCPDUMP_OPT GROK_LIVE_TCPDUMP_OPT GROK_DPMI_OPT
 		     HAVE_RRDTOOL_OPT SUPPORT_IPV6_OPT
-		     "B:N:H:s:T:z:gpdhtucSLvw21", long_options, &option_index);
+		     "B:N:H:s:T:z:gpdhtucSLvw321", long_options, &option_index);
     if (c == -1)
         break;
     if (c == 'z') {
@@ -2055,7 +2174,7 @@ ParseArgs (int *pargc, char *argv[])
       c = getopt_long (*pargc, argv,
 		     GROK_TCPDUMP_OPT GROK_LIVE_TCPDUMP_OPT GROK_DPMI_OPT
 		     HAVE_RRDTOOL_OPT SUPPORT_IPV6_OPT
-		     "B:N:H:s:T:z:gpdhtucSLvw21", long_options, &option_index);
+		     "B:N:H:s:T:z:gpdhtucSLvw321", long_options, &option_index);
 
       if (c == -1) {
 	    break;
@@ -2073,7 +2192,7 @@ ParseArgs (int *pargc, char *argv[])
 	    {
 	      fprintf (fp_stderr, 
             "Error while loading configuration\n"
-	        "Could not open %s\n", internal_net_file);
+	        "Wrong or missing %s\n", internal_net_file);
 	      exit (1);
 	    }
 	  net_conf = TRUE;
@@ -2246,6 +2365,11 @@ ParseArgs (int *pargc, char *argv[])
         case '1':
           log_version = 1;
 	  break;
+#ifdef L3_BITRATE
+        case '3':
+          l3_engine_log = TRUE;
+	  break;
+#endif
 	case 'v':
 	  Version ();
 	  exit (EXIT_SUCCESS);
@@ -2342,49 +2466,124 @@ ParseArgs (int *pargc, char *argv[])
 }
 
 
-
 int
-LoadInternalNets (char *file)
-{
-  int i;
-  FILE *fp;
-  char c[50];
+LoadInternalNets (char *file) {
+    FILE *fp;
+    char *line, *ip_string, *mask_string, *err;
+    int i, len;
+    long int mask_bits;
+    unsigned int full_local_mask;
+    char s[16];
+//    char *slash_p, *tmp;
 
-  fp = fopen (file, "r");
-  if (fp == NULL)
-    {
-      return 0;
+    fp = fopen(file, "r");
+    if (!fp) {
+        fprintf(fp_stderr, "Unable to open file '%s'\n", file);
+        return 0;
     }
 
-  i = 0;
+    tot_internal_nets = 0;
+    i = 0;
+    while (1) {
+        line = readline(fp, 1, 1);
+        if (!line)
+            break;
 
-  while (fgets (c, 20, fp) != NULL)
-    {
-      inet_aton (c, &(internal_net_list[i]));
-      if (fgets (c, 20, fp) != NULL)
-	{
-	  inet_aton (c, &(internal_net_mask2[i]));
-	  internal_net_mask[i] = inet_addr (c);
-	}
-      else
-	{
-	  fprintf (fp_stderr, "Cannot parse mask for net %d\n", (i + 1));
-	  return 0;
-	}
-      if (debug)
-	{
-	  fprintf (fp_stdout, "Adding: %s as internal net ",
-		  inet_ntoa (internal_net_list[i]));
-	  fprintf (fp_stdout, "with mask %s (%d)\n", inet_ntoa (internal_net_mask2[i]),
-		  internal_net_mask[i]);
-	}
-      i++;
+        len = strlen(line);
+        if (line[len - 1] == '\n')
+            line[len - 1] = '\0';
+        ip_string = line;
+
+        if (i == MAX_INTERNAL_HOSTS) {
+            fprintf (fp_stderr, "Maximum number of internal hosts/networks (%d) exceeded\n", MAX_INTERNAL_HOSTS);
+            return 0;
+        }
+
+        //single line format
+        if (strchr(ip_string,'/'))
+        {
+            ip_string = strtok(ip_string,"/");
+            mask_string = strtok(NULL,"/");
+
+            if (!mask_string) {
+                fprintf(fp_stderr, "Missing ip or network mask in net config n.%d\n", (i+1));
+                return 0;
+            }
+            if (!inet_aton (ip_string, &(internal_net_list[i]))) {
+                fprintf(fp_stderr, "Invalid ip address in net config n.%d\n", (i+1));
+                return 0;
+            }
+
+            //network mask as a single number
+            if (!strchr(mask_string,'.'))
+            { 
+                err = NULL;
+                mask_bits = strtol(mask_string, &err, 10);
+                if (*err || mask_bits < 1 || mask_bits > 32) {
+                    fprintf(fp_stderr, "Invalid network mask in net config n.%d\n", (i+1));
+                    return 0;
+                }
+
+                if (internal_net_list[i].s_addr == 0)
+                   full_local_mask = 0;
+                else
+                   full_local_mask = 0xffffffff << (32 - mask_bits);
+
+                sprintf(s,"%d.%d.%d.%d",
+                    full_local_mask >> 24,
+                    (full_local_mask >> 16)  & 0x00ff,
+                    (full_local_mask >> 8 ) & 0x0000ff,
+                    full_local_mask & 0xff);
+                inet_aton (s, &(internal_net_mask2[i]));
+                internal_net_mask[i] = inet_addr(s);
+            }
+            //mask in dotted format
+            else
+            {
+                if (!inet_aton (mask_string, &(internal_net_mask2[0]))) {
+                    fprintf(fp_stderr, "Invalid network mask in net config n.%d\n", (i+1));
+                    return 0;
+                }
+                internal_net_mask[i] = inet_addr (mask_string);
+            }
+        }
+        //old format
+        else
+        {
+            if (!inet_aton (ip_string, &(internal_net_list[i]))) {
+                fprintf(fp_stderr, "Invalid ip address in net config n.%d\n", (i+1));
+                return 0;
+            }
+
+            mask_string = readline(fp, 1, 1);
+            if (!mask_string){
+                fprintf(fp_stderr, "Missing network mask in net config n.%d\n", (i+1));
+                return 0;
+            }
+
+            len = strlen(mask_string);
+            if (mask_string[len - 1] == '\n')
+                mask_string[len - 1] = '\0';
+            if (!inet_aton (mask_string, &(internal_net_mask2[i]))) {
+                fprintf(fp_stderr, "Invalid network mask in net config n.%d\n", (i+1));
+                return 0;
+            }
+            internal_net_mask[i] = inet_addr (mask_string);
+        }
+        if (debug)
+        {
+            fprintf (fp_stdout, "Adding: %s as internal net ",
+                    inet_ntoa (internal_net_list[i]));
+            fprintf (fp_stdout, "with mask %s (%u)\n", 
+                    inet_ntoa (internal_net_mask2[i]),
+                    internal_net_mask[i]);
+        }
+
+        tot_internal_nets++;
+        i++;
     }
-  tot_internal_nets = i;
-  return 1;
+    return 1;
 }
-
-
 
 /* the memcpy() function that gcc likes to stuff into the program has alignment
    problems, so here's MY version.  It's only used for small stuff, so the
