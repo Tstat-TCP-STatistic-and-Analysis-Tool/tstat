@@ -1211,7 +1211,6 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
      case RFC7983_UNK:
         // reset status
         /* No minimal matching. No subflow and flow status reset */
-       printf("reset: %d %d\n", ((uint8_t*)prtp)[0], pnum);
        thisdir->type = UDP_UNKNOWN;
        break;
 
