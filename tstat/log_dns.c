@@ -280,7 +280,8 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
               if (rr_str){ // Proceed only if not null
 
                   // Check not too long - Put a delimiter
-                  rr_str[MAX_STR_DNS] = '\0';
+                  int max_len = strnlen (rr_str, MAX_STR_DNS);
+                  rr_str[max_len] = '\0';
 
                   // Replace delimiters with spaces, and intra-field spaces with tabs
                   char * last_field = replace_char (rr_str, '\t', ' ',REPLACE_FIELDS);
