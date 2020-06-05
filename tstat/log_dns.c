@@ -34,6 +34,7 @@
 extern FILE *fp_dns_logc;
 
 // Utility function prototype
+static inline char * my_ldns_rr2str(ldns_rr * rr);
 static char * replace_char (char *s, char find, char replace, int max_replace);
 static inline char * pkt_rcode2str(ldns_pkt_rcode rcode);
 static inline char * rr_class2str(ldns_rr_class rcode);
@@ -275,7 +276,7 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
           if (rr){ // Proceed only if not null
 
               // <rr_str> contains DNS information
-              char * rr_str = ldns_rr2str(rr);
+              char * rr_str = my_ldns_rr2str(rr);
 
               if (rr_str){ // Proceed only if not null
 
@@ -312,6 +313,33 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
 
 }
 
+
+// Work around to avoid calling ldns_rr2str which has a memory leak
+static inline char * my_ldns_rr2str(ldns_rr * rr){
+  
+  ldns_buffer *tmp_buffer = ldns_buffer_new(MAX_STR_DNS);
+  if (!tmp_buffer)
+    return NULL;
+
+  int ret = ldns_rr2buffer_str_fmt(tmp_buffer, ldns_output_format_default, rr);
+  if (ret != LDNS_STATUS_OK ){
+    ldns_buffer_free(tmp_buffer);
+    return NULL;
+  }
+
+  char * rr_str = malloc(tmp_buffer->_position + 1);
+  if (!rr_str){
+    ldns_buffer_free(tmp_buffer);
+    return NULL;
+  }
+
+  memcpy(rr_str, tmp_buffer->_data, tmp_buffer->_position);
+  rr_str[tmp_buffer->_position] = '\0';
+  ldns_buffer_free(tmp_buffer);
+
+  return rr_str;
+
+}
 
 // Utility Function to replace Char with Tab; no more than <max_replace> are performed
 static char * replace_char (char *s, char find, char replace, int max_replace) {
