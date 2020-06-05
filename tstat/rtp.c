@@ -238,11 +238,19 @@ extern int debug;
 #define NOT_IN_SEQ 3		/* come reord */
 #define DUP 4
 
+#ifndef RTP_SSRC_MAX_SINGLETON
+#define RTP_SSRC_MAX_SINGLETON 10
+#endif
+#ifndef RTP_SSRC_SINGLETON_THRESHOLD
+#define RTP_SSRC_SINGLETON_THRESHOLD 1
+#endif
+
+
 void rtp_plus_check (ucb *thisdir, struct rtphdr *prtp, int dir, struct ip *pip, struct udphdr *pudp, void *plast);
 void rtp_plus_stat (ucb *thisdir, struct rtphdr *prtp, int dir, struct ip *pip, struct udphdr *pudp, void *plast);
 
-rtp  *rtp_locate_ssrc (rtp *rtp_list, uint32_t ssrc, int *length);
-rtcp *rtcp_locate_ssrc (rtcp *rtcp_list, uint32_t ssrc, int *length);
+rtp  *rtp_locate_ssrc (rtp *rtp_list, uint32_t ssrc, int *length, int *singletons);
+rtcp *rtcp_locate_ssrc (rtcp *rtcp_list, uint32_t ssrc, int *length, int *singletons);
 int  rtp_valid_pt (u_int8_t pt);
 void rtp_init_pt_counter (rtp * f_rtp);
 void rtcp_init_pt_counter (rtcp * f_rtcp);
@@ -260,60 +268,74 @@ void update_conn_log_v3(udp_pair *flow);
 
 /* Functions to manage the rtp/rtcp record list */
 
-rtp *rtp_locate_ssrc(rtp *rtp_list,uint32_t ssrc, int *length)
+rtp *rtp_locate_ssrc(rtp *rtp_list,uint32_t ssrc, int *length, int *singletons)
 {
    int iterator;
+   int ssrc_singletons;
    rtp *item;
    if (rtp_list==NULL)
     {
       *length = 0;
+      *singletons = 0;
       return(NULL);
     }
 
    item = rtp_list;
    iterator = 1;
+   ssrc_singletons=0;
    while (item!=NULL)
     {
       if (item->ssrc == ssrc)
        {
 	*length = iterator;
+   *singletons = ssrc_singletons;
 	return(item);
        }
       else
        {
 	 iterator++;
+     if (item->pnum<=RTP_SSRC_SINGLETON_THRESHOLD)
+         ssrc_singletons++;
 	 item = item->next;
        }
     }
    *length = iterator;
+   *singletons = ssrc_singletons;
    return(NULL);
 }
 
-rtcp *rtcp_locate_ssrc(rtcp *rtcp_list,uint32_t ssrc, int *length)
+rtcp *rtcp_locate_ssrc(rtcp *rtcp_list,uint32_t ssrc, int *length, int *singletons)
 {
    int iterator;
+   int ssrc_singletons;
    rtcp *item;
    if (rtcp_list==NULL)
     {
       *length = 0;
+      *singletons = 0;
       return(NULL);
     }
    item = rtcp_list;
    iterator = 1;
+   ssrc_singletons = 0;
    while (item!=NULL)
     {
       if (item->ssrc == ssrc)
        {
 	*length = iterator;
+   *singletons = ssrc_singletons;
 	return(item);
        }
       else
        {
 	 iterator++;
+     if (item->pnum<=RTP_SSRC_SINGLETON_THRESHOLD)
+         ssrc_singletons++;
 	 item = item->next;
        }
     }
    *length = iterator;
+   *singletons = ssrc_singletons;
    return(NULL);
   
 }
@@ -691,6 +713,48 @@ int rtp_extensions_size(struct rtphdr *prtp)
      // RFC 5285  1-byte extensions
 //     printf(" %d bytes\n",4*ntohs(get_u16(base,2)));
      extension_size += 4*ntohs(get_u16(base,2));
+     
+#ifdef NAVIGATE_EXTENSIONS
+     // experimental code to navigate the RTP extensions
+     {
+       int ext_ID;
+       int ext_len;
+       int ext_num;
+       int ext_size = 4*ntohs(get_u16(base,2));
+       // printf("Dimensione estensioni: %d - ",ext_size);
+
+       int ext_offset = 0;
+       int j;
+       while (ext_offset < ext_size)
+       {
+           ext_ID = (get_u8(base,4+ext_offset) & 0x00f0 ) >> 4;
+           ext_len = (get_u8(base,4+ext_offset) & 0x000f ) ;
+           if (ext_ID==0 && ext_len == 0)
+            {
+                ext_offset += 1;
+          //      printf("PAD - ");
+            }
+           else if (ext_ID<15)
+           {
+             // printf("ID: %d LEN: %d - ",ext_ID,ext_len+1);
+             printf("(%d,",ext_ID);
+             for (j=0;j<=ext_len;j++)
+              { 
+                printf("%02x",get_u8(base,4+ext_offset+1+j));
+              }
+              printf(") ");
+             ext_offset += ext_len+1+1;
+           }
+           else 
+           {
+            //   printf("ID: %d ",ext_ID);
+               break;
+           }
+       } 
+       printf("\n");
+    }
+#endif
+
    }
   else if (get_u8(base,0)==0x10 && (get_u8(base,1) & 0xf0 ) == 0 )
    {
@@ -900,6 +964,7 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
    int rfc7983_packet_type;
    int packet_payload;
    int ssrc_list_length;
+   int ssrc_singletons_count;
    struct rtp *f_rtp = NULL;
    struct rtcp *f_rtcp = NULL;
    u_int8_t pt_rtcp;
@@ -917,7 +982,7 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
        // Check RTP stuff
        
        /* locate previous SSRC record */
-       f_rtp = rtp_locate_ssrc(thisdir->flow_ptr.rtp_ptr,pssrc,&ssrc_list_length); 
+       f_rtp = rtp_locate_ssrc(thisdir->flow_ptr.rtp_ptr,pssrc,&ssrc_list_length,&ssrc_singletons_count); 
 
        // If found, update status, else, allocate a new one
 
@@ -970,10 +1035,11 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
 	            fprintf (fp_stderr, "Warning: Ignoring not matching starting RTP seqno\n");
             }
          }
-       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC)
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count <= RTP_SSRC_MAX_SINGLETON)
          { 
            rtp *f_rtp2;
-      
+
+           // printf ("Len = %d Single(%d) = %d\n",ssrc_list_length,RTP_SSRC_SINGLETON_THRESHOLD,ssrc_singletons_count);
 	   packet_payload = ntohs (pudp->uh_ulen) - 8 - 12 - prtp->cc * 4 -rtp_extensions_size(prtp);
            f_rtp2 = new_rtp_subflow(pssrc,prtp->pt,pts,pseq,packet_payload);
 
@@ -982,6 +1048,12 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
       
            thisdir->multiplexed_protocols |= RFC7983_RTP;
            // Do not change the type, since we still do not have a full RTP confirmation
+         }
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count > RTP_SSRC_MAX_SINGLETON)
+         {
+	   // Too many singletons . This is probably a false positive. 
+	   fprintf (fp_stderr, "Warning: RTP More than %d SSRC with less than %d packets associated to the flow!\n",RTP_SSRC_MAX_SINGLETON, RTP_SSRC_SINGLETON_THRESHOLD+1);
+	   thisdir->type = UDP_UNKNOWN;
          }
        else
          {
@@ -994,7 +1066,7 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
      case RFC7983_RTCP:
        // Check RTCP stuff
       /* locate previous SSRC record */
-       f_rtcp = rtcp_locate_ssrc(thisdir->flow_ptr.rtcp_ptr,pts,&ssrc_list_length); 
+       f_rtcp = rtcp_locate_ssrc(thisdir->flow_ptr.rtcp_ptr,pts,&ssrc_list_length,&ssrc_singletons_count); 
 
        if (f_rtcp!=NULL)
         {
@@ -1044,13 +1116,14 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
 	   }   
 	  
        }
-       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC)
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count <= RTP_SSRC_MAX_SINGLETON)
         {
           rtcp *f_rtcp2;
           char *pdecode = (char *) prtp;
           unsigned char rc = prtp->cc + (prtp->x << 4);
  
-          f_rtcp2 = new_rtcp_subflow(pts, pt_rtcp, thisdir->data_bytes - ntohs (pudp->uh_ulen));
+          //  printf ("Len = %d Single(%d) = %d\n",ssrc_list_length,RTP_SSRC_SINGLETON_THRESHOLD,ssrc_singletons_count);
+         f_rtcp2 = new_rtcp_subflow(pts, pt_rtcp, thisdir->data_bytes - ntohs (pudp->uh_ulen));
       // f_rtcp->rtcp_data_bytes += getpayloadlength(pip,plast) - 8 ;
       f_rtcp2->rtcp_data_bytes += ntohs (pudp->uh_ulen) - 8;
       //printf("First RTCP %d\n",f_rtcp2->rtcp_data_bytes);
@@ -1063,6 +1136,12 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
           thisdir->multiplexed_protocols |= RFC7983_RTCP;
            // Do not change the type, since we still do not have a full RTP confirmation
         }
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count > RTP_SSRC_MAX_SINGLETON)
+         {
+	   // Too many singletons . This is probably a false positive. 
+	   fprintf (fp_stderr, "Warning: RTP More than %d SSRC with less than %d packets associated to the flow!\n",RTP_SSRC_MAX_SINGLETON, RTP_SSRC_SINGLETON_THRESHOLD+1);
+	   thisdir->type = UDP_UNKNOWN;
+         }
        else
          {
 	   // The SSRC list is too long. This is probably a false positive. Forget this flow
@@ -1104,6 +1183,7 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
    int rfc7983_packet_type;
    int packet_payload;
    int ssrc_list_length;
+   int ssrc_singletons_count;
    struct rtp *f_rtp = NULL;
    struct rtcp *f_rtcp = NULL;
    
@@ -1124,7 +1204,7 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
              (thisdir->pup->addr_pair.b_port > 1024) )
         {
           /* locate previous SSRC record */
-         f_rtp = rtp_locate_ssrc(thisdir->flow_ptr.rtp_ptr,pssrc,&ssrc_list_length);
+         f_rtp = rtp_locate_ssrc(thisdir->flow_ptr.rtp_ptr,pssrc,&ssrc_list_length,&ssrc_singletons_count);
          if (f_rtp!=NULL)
           {
            packet_payload = getpayloadlength(pip,plast) - 8 - 12 - prtp->cc * 4 - rtp_extensions_size(prtp);
@@ -1140,20 +1220,28 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
 	             fprintf (fp_stderr, "Warning: RTP packet with negative payload length\n");
              }
           }
-         else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC)
+         else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count <= RTP_SSRC_MAX_SINGLETON)
           {
             // Allocate the new subflow
             rtp *f_rtp2;
   
+         //  printf ("Len = %d Single(%d) = %d\n",ssrc_list_length,RTP_SSRC_SINGLETON_THRESHOLD,ssrc_singletons_count);
 	    packet_payload = ntohs (pudp->uh_ulen) - 8 - 12 - prtp->cc * 4 - rtp_extensions_size(prtp);
             f_rtp2 = new_rtp_subflow(pssrc,prtp->pt,pts,pseq, packet_payload );
 
             f_rtp2->next = thisdir->flow_ptr.rtp_ptr;
             thisdir->flow_ptr.rtp_ptr = f_rtp2;
           }
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count > RTP_SSRC_MAX_SINGLETON)
+         {
+	   // Too many singletons . This is probably a false positive. 
+	   fprintf (fp_stderr, "Warning: RTP More than %d SSRC with less than %d packets associated to the flow!\n",RTP_SSRC_MAX_SINGLETON, RTP_SSRC_SINGLETON_THRESHOLD+1);
+	   thisdir->type = UDP_UNKNOWN;
+         }
          else
           {
 	    // SSRC list became too long. Ignore.
+	   fprintf (fp_stderr, "Warning: RTP Too many SSRC associated to the flow!\n");
             thisdir->type = UDP_UNKNOWN; 
           }
         }
@@ -1170,19 +1258,20 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
        if  ( (thisdir->pup->addr_pair.a_port > 1024) && 
              (thisdir->pup->addr_pair.b_port > 1024) )
         {
-	  f_rtcp = rtcp_locate_ssrc(thisdir->flow_ptr.rtcp_ptr,pts,&ssrc_list_length);
+	  f_rtcp = rtcp_locate_ssrc(thisdir->flow_ptr.rtcp_ptr,pts,&ssrc_list_length,&ssrc_singletons_count);
           if (f_rtcp!=NULL)
 	   { 
              thisdir->multiplexed_protocols |= RFC7983_RTCP;
 	     rtcp_stat (thisdir, f_rtcp, prtp, dir, pip, plast);
 	   }
-	  else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC)
+	  else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count <= RTP_SSRC_MAX_SINGLETON)
 	   {
 	     // Allocate a new subflow
              rtcp *f_rtcp2;
              char *pdecode = (char *) prtp;
              unsigned char rc = prtp->cc + (prtp->x << 4);
  
+        //   printf ("Len = %d Single(%d) = %d\n",ssrc_list_length,RTP_SSRC_SINGLETON_THRESHOLD,ssrc_singletons_count);
              f_rtcp2 = new_rtcp_subflow(pts, pt_rtcp, thisdir->data_bytes - ntohs (pudp->uh_ulen));
       // f_rtcp->rtcp_data_bytes += getpayloadlength(pip,plast) - 8 ;
       f_rtcp2->rtcp_data_bytes += ntohs (pudp->uh_ulen) - 8;
@@ -1195,9 +1284,16 @@ void rtp_plus_stat (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip,
       
              thisdir->multiplexed_protocols |= RFC7983_RTCP;
 	   }
+       else if (ssrc_list_length <= MAX_COUNT_RTP_SSRC && ssrc_singletons_count > RTP_SSRC_MAX_SINGLETON)
+         {
+	   // Too many singletons . This is probably a false positive. 
+	   fprintf (fp_stderr, "Warning: RTP More than %d SSRC with less than %d packets associated to the flow!\n",RTP_SSRC_MAX_SINGLETON, RTP_SSRC_SINGLETON_THRESHOLD+1);
+	   thisdir->type = UDP_UNKNOWN;
+         }
          else
           {
-	    // Ports are wrong. It should have not been RTP_PLUS from the beginning
+	   // The SSRC list is too long. This is probably a false positive. Forget this flow
+	   fprintf (fp_stderr, "Warning: RTCP Too many SSRC associated to the flow!\n");
             thisdir->type = UDP_UNKNOWN; 
         }
         }
