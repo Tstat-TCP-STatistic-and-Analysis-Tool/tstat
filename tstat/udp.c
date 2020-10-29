@@ -1095,178 +1095,42 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
     /* New code for Google QUIC Version >= 46 */
   switch(thisdir->QUIC_state)
    {
-/*
-  Jun-Jul 2019 -
-  Starting from QUIC version 46 Google decided to change the packet header to be compatible with the IETF QUIC
-
-  We currently try to identify only Google QUIC, since the specifics for other IETF QUIC formats are not widespread.
-  
-  The QUIC > v46 framing has a 2-18 byte header, starting with a
-  public flag byte.
-  
-  From the documents, the public flag should now be 
-  Long Header  11 tt rr pp 
-  Short Header 01 rrrr  pp
-
-  From the capture we have:
-  0xc3 - 4 byte SeqNr  - OPEN CID 4B V
-  0xd3 - 4 byte SeqNr  - OPEN CID 4B ?
-  0x40 - Data 1 byte SeqNr - DATA_1B
-  0x41 - Data 2 byte SeqNr - DATA_2B
-  
-  The CID is direction dependent and for Google is currently 8 bytes
-  
-  We try to enstate the same rules than before
-  
-  We suppose the Google logic for CID exchange, so that only the Destination CID is sent by the client, and the 
-  Source CID is always empty. We identify the flow direction (Client/Server) to be able to 
-  determine the packet number offset in the data (short header) packets.
-  
-*/
+    /*
+      MATCHING QUIC IETF
+      We only have part of the header in clear.
+      We match the DCID with SCID and version across "Initial" (or "0-RTT") packets
+    */
      case QUIC_UNKNOWN:
-       switch (base[8])
-        {
-	  case 0xc3:
-	  case 0xd3:
-	     if (base[9]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	      {
-	        thisdir->QUIC_seq_nr = (int)base[25];
-	        memcpy(thisdir->QUIC_conn_id,base+14,8);
-		thisdir->QUIC_dir = (base[13]==0x50? 0 : 1);
-	        thisdir->QUIC_state=QUIC_OPENV_SENT;
-	        /* If SeqNr == 1, the match is strong enough to guarantee the classification */
-                if (thisdir->QUIC_seq_nr == 1)
-	          thisdir->is_QUIC = 1;
-		//printf("-- UNKNOWN->OPENV_SENT %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-	      }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	     break;
-	  case 0x40:
-	  case 0x41:
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-		if ( otherdir->QUIC_dir == 0 )
-		  thisdir->QUIC_seq_nr = ( base[8]==0x40 ? (int)base[9] : get_u16(base,9));
-		else
-		  thisdir->QUIC_seq_nr = ( base[8]==0x40 ? (int)base[17] : get_u16(base,17));
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-		//printf("-- UNKNOWN->DATA_SENT %d %d\n", otherdir->QUIC_dir , thisdir->QUIC_seq_nr);
-		
-	      }	
-	    break;
-	  default:
-	    break;
-	
-	}
-       break;
-     case QUIC_OPENV_SENT:
      case QUIC_OPEN_SENT:
-       /* If we are here, we still have to see meaningful information in both directions */
-       /* If there is an CID, We expect to match the ID with the previous ID state, and that the sequence number is +1 */
-       switch (base[8])
-        {
-	  case 0xc3:
-	  case 0xd3:
-	    if (base[9]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	     {
-	       seq_nr = (int)base[25];
-	       memcpy(connection_id,base+14,8);
-	       thisdir->QUIC_dir = (base[13]==0x50? 0 : 1);
-	       if ( memcmp(connection_id,thisdir->QUIC_conn_id,8)==0 &&
-		      (seq_nr == thisdir->QUIC_seq_nr + 1) )
-		 {
-		   thisdir->QUIC_seq_nr = seq_nr;
-		   thisdir->is_QUIC = 1;  
-		//printf("-- OPENV_SENT->is_QUIC %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-		 }
-	       else
-		 {
-		   /* Update the information, overriding the previous status */
-		   memcpy(thisdir->QUIC_conn_id,connection_id,8);
-		   thisdir->QUIC_seq_nr = seq_nr;
-	           thisdir->QUIC_state=QUIC_OPENV_SENT;
-                   if (thisdir->QUIC_seq_nr == 1)
-	              thisdir->is_QUIC = 1;
-		//printf("-- OPENV_SENT->OPENV_SENT %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-		 }
-	     }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x40:
-	  case 0x41:
-	    /* If we are here, we had a previous OPEN state, but now we have some DATA */
-	    /* We use the previous logic, and elaborate only if the status in the opposite direction */
-	    /* is not unknown */
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-		if ( otherdir->QUIC_dir == 0 )
-		  thisdir->QUIC_seq_nr = ( base[8]==0x40 ? (int)base[9] : get_u16(base,9));
-		else
-		  thisdir->QUIC_seq_nr = ( base[8]==0x40 ? (int)base[17] : get_u16(base,17));
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-		//printf("-- OPEN_SENT->DATA_SENT %d %d\n", otherdir->QUIC_dir , thisdir->QUIC_seq_nr);
-	      }	
-	    break;
-	  default:
-	    break;
-	}
-       break;
-     case QUIC_DATA_SENT:
-       /* If we are here, we started the classification in the opposite direction, and we started seeing data in this direction */ 
-       switch (base[8])
-        {
-	  case 0xc3:
-	  case 0xd3:
-	    /* Another OPENV - Reset the status */
-	    if (base[9]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	     {
-	       thisdir->QUIC_seq_nr = base[25];
-	       memcpy(thisdir->QUIC_conn_id,base+14,8);
-	       thisdir->QUIC_dir = (base[13]==0x50? 0 : 1);
-	       thisdir->QUIC_state=QUIC_OPENV_SENT;
-	       /* If SeqNr == 1, the match is strong enough to guarantee the classification */
-               if (thisdir->QUIC_seq_nr == 1)
-	          thisdir->is_QUIC = 1;
-		//printf("-- DATA_SENT->OPENV_SENT %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-	     }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x40:
-	  case 0x41:
-	    /* If we are here, we had a previous DATA state, we match the sequence number */
-	     if ( thisdir->QUIC_dir == 0 )
-	        seq_nr = ( base[8]==0x40 ? (int)base[17] : get_u16(base,17));
-	     else
-	        seq_nr = ( base[8]==0x40 ? (int)base[9] : get_u16(base,9));
-	        
-	     if ( seq_nr == thisdir->QUIC_seq_nr + 1 )
-	      {
-		thisdir->QUIC_seq_nr = seq_nr;
-		thisdir->is_QUIC = 1;  
-		//printf("-- DATA_SENT->IS_QUIC %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-	      }
-	     else
-	      {
-		thisdir->QUIC_seq_nr = seq_nr;
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-		//printf("-- DATA_SENT->DATA_SENT %d %d\n", thisdir->QUIC_dir , thisdir->QUIC_seq_nr);
-	      }
-	    break;
-	  default:
-	    break;
-	}
+        
+        // Look for initial packets with DCID and no SCID. This is an "Initial" from the client
+        if ( ( (base[8] & 0xF0) == 0xC0) && (base[13] == 8) && (base[22] == 0) ){
+
+            memcpy(thisdir->QUIC_vers,base+9,4); // Save the version
+            memcpy(thisdir->QUIC_conn_id,base+14,8); // Save the connection ID
+            thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
+
+        }
+        
+        // Look for "Initial" or "0-RTT" packets with SCID and no DCID. This is from the server.
+        // We also must have observed at least one Initial from the client.
+        else if ( (( (base[8] & 0xF0) == 0xC0) || ( (base[8] & 0xF0) == 0xD0) ) &&
+                  (base[13] == 0) && (base[14] == 8) &&
+                  ( otherdir->QUIC_state == QUIC_OPEN_SENT) ) {
+                  
+            memcpy(thisdir->QUIC_vers,base+9,4); // Save the version
+            memcpy(thisdir->QUIC_conn_id,base+15,8); // Save the connection ID
+            
+            // If the SCID and DCID and the version is the same, we have QUIC
+            if ( ( memcmp(thisdir->QUIC_conn_id, otherdir->QUIC_conn_id, 8) == 0 ) &&
+                 ( memcmp(thisdir->QUIC_vers, otherdir->QUIC_vers, 4) == 0 ) ){
+            
+                thisdir->QUIC_state = otherdir->QUIC_state = QUIC_DATA_SENT; // Mark the flow forever
+                thisdir->is_QUIC = otherdir->is_QUIC = 1;     
+            }                
+                  
+        }
+
        break;
      default:
        break;
