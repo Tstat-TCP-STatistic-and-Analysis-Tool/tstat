@@ -173,6 +173,9 @@ unsigned long int f_RTP_count = 0;	/* total RTP flow number */
 unsigned long int f_RTCP_count = 0;	/* total RTP flow number */
 unsigned long int f_RTP_tunneled_TCP_count = 0;	/* total RTP flow tunneled on TCP */
 
+unsigned long tot_conn_TCP = 0;
+unsigned long tot_conn_UDP = 0;
+
 struct L3_bitrates L3_bitrate;
 struct L4_bitrates L4_bitrate;
 struct L7_bitrates L7_bitrate;
@@ -352,6 +355,11 @@ extern void max_adx(int, int, double);
 extern char dump_conf_fname[];
 char runtime_conf_fname[200];
 //static timeval last_runtime_check = {-1,-1};
+timeval last_time_step;
+timeval last_cleaned;
+
+char global_data_dir[FILENAME_SIZE];
+char curr_data_dir[FILENAME_SIZE+20];
 
 #ifdef DNS_CACHE_PROCESSOR
 char *dns_namefilter_file;

@@ -38,6 +38,8 @@ extern Bool internal_eth (uint8_t *eth_addr, eth_filter *filter);
 char *read_infile (char *fname);
 void tcpdump_install_filter (pcap_t * pcap, bpf_u_int32 net);
 
+struct pcap_pkthdr pcap_current_hdr;
+unsigned char *pcap_current_buf;
 
 /* global pointer, the pcap info header */
 static pcap_t *pcap;

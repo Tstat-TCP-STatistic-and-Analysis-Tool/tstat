@@ -36,7 +36,7 @@ int  yt_redir_count;
 int  yt_mobile;
 int  yt_stream;
 regex_t re[21];
-regmatch_t re_res[2];
+// regmatch_t re_res[2];
 
 /* Indexes for YouTube Mobile parameters */
 #define PARAM_APP	 0
@@ -396,6 +396,7 @@ enum http_content classify_http_get(void *pdata,int data_length)
   char c;
   int i;
   int status1,status2;
+  regmatch_t re_res[2];
   
   if (available_data < 1)
     return HTTP_GET;

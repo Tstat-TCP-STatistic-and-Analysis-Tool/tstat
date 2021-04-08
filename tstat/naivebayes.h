@@ -34,7 +34,8 @@
 struct bayes_gaussian {
      int n;
      double *w, *m, *s;
-} bayes_gaussian;
+};
+extern struct bayes_gaussian bayes_gaussian;
 
 
 #define CONST_OneOverSqrt2Pi 0.398942280401433
@@ -78,8 +79,8 @@ struct bayes_settings {
 #define BAYES_DISCRETE 0
 #define BAYES_GAUSSIAN 1	        
      int     * class_type;
-} bayes_settings;
-
+};
+extern struct bayes_settings bayes_settings;
 
 // this is a single-feature  per-flow structure 
 struct bayes_classifier {
@@ -102,8 +103,8 @@ struct bayes_classifier {
      				  
      int      * argmax_count;	  // number of windows ``won'' by a given class      	
      
-} bayes_classifier;
-
+};
+extern struct bayes_classifier bayes_classifier;
 
 
 

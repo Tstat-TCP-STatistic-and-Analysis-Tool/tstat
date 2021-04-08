@@ -6,9 +6,9 @@
 # define variables for version numbers
 m4_define([_version_major], [3])
 m4_define([_version_minor], [2])
-m4_define([_version_bugfix], [1])
-m4_define([_version_date], ["Fri 17 Apr 14:09:33 CEST 2020"])
-m4_define([_version_flavor], ["Tunguska"])
+m4_define([_version_bugfix], [2])
+m4_define([_version_date], ["iThu  8 Apr 18:11:13 CEST 2021"])
+m4_define([_version_flavor], ["Syzygy"])
 m4_define([_libtstat_version], [1.0.0])
 
 AC_INIT([tstat], 

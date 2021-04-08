@@ -91,8 +91,8 @@ struct packet_header
   u_int len;			/* length of this packet (off wire) */
 };
 
-struct pcap_pkthdr pcap_current_hdr;
-unsigned char *pcap_current_buf;
+extern struct pcap_pkthdr pcap_current_hdr;
+extern unsigned char *pcap_current_buf;
 
 
 #ifdef BY_HAND

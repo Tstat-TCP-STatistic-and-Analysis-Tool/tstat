@@ -163,8 +163,8 @@ typedef unsigned char tt_uint8;
 
 #define FILENAME_SIZE 600
 /* declaration of global variables */
-char global_data_dir[FILENAME_SIZE];
-extern char runtime_conf_fname[];
+extern char global_data_dir[FILENAME_SIZE];
+// extern char runtime_conf_fname[];
 extern int num_udp_pairs;	/* how many pairs are in use */
 extern udp_pair **utp;		/* array of pointers to allocated pairs */
 
@@ -660,10 +660,10 @@ struct ipaddr *IPV6ADDR2ADDR (struct in6_addr *addr6);
 /* LM stop */
 
 char *get_basename (char *filename);
-char curr_data_dir[FILENAME_SIZE+20];
+extern char curr_data_dir[FILENAME_SIZE+20];
 extern char runtime_conf_fname[];
-timeval last_time_step;
-timeval last_cleaned;
+extern timeval last_time_step;
+extern timeval last_cleaned;
 
 extern Bool runtime_engine;
 extern Bool rrd_engine;
@@ -673,8 +673,8 @@ extern FILE *fp_stderr;
 extern Bool redirect_output; 
 extern char *outdir_basename;
 
-unsigned long tot_conn_TCP;
-unsigned long tot_conn_UDP;
+extern unsigned long tot_conn_TCP;
+extern unsigned long tot_conn_UDP;
 void trace_done_periodic ();
 void freequad (quadrant ** ppquad);
 

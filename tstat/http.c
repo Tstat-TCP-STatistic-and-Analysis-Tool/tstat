@@ -55,7 +55,7 @@ enum re_patterns {
 
 char *http_patterns[RE_LASTINDEX];
 regex_t http_re[RE_LASTINDEX];
-regmatch_t re_res[3];
+// regmatch_t re_res[3];
 char http_url[HTTP_LARGE_BUFFER_SIZE];
 char http_url_private[HTTP_LARGE_BUFFER_SIZE];
 char http_method[10];
@@ -161,6 +161,7 @@ void http_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
   tcp_seq seqnum;
   tcb *tcp_stats;
   char last_payload_char;
+  regmatch_t re_res[3];
 
   tcphdr *ptcp;
   ptcp = (tcphdr *) hdr;

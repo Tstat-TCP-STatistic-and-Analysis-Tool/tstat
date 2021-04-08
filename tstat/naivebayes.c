@@ -44,6 +44,10 @@ void bayes_parse (const char *buf);
 double *bayes_file2vec (const char *fname, int *len, double min_th, Bool);
 void bayes_check (struct bayes_settings *settings, FILE * stream);
 
+// globals
+struct bayes_gaussian bayes_gaussian;
+struct bayes_settings bayes_settings;
+struct bayes_classifier bayes_classifier;
 
 
 #if BAYES_BELIEF_HISTO
