@@ -10,6 +10,13 @@ bin_PROGRAMS = $(target)
 demo_SOURCES = \
     pcapwrapper.c demo.c\
     pcapwrapper.h
-demo_LDFLAGS = -Wl,--rpath -Wl,$(top_srcdir)/libtstat/.libs
+
+if OSX
+demo_LDADD = $(top_srcdir)/libtstat/.libs/libtstat.dylib
+demo_LDFLAGS = -Wl,-rpath,$(top_srcdir)/libtstat/.libs
+else
 demo_LDADD = $(top_srcdir)/libtstat/.libs/libtstat.so
+demo_LDFLAGS = -Wl,--rpath -Wl,$(top_srcdir)/libtstat/.libs
+endif
+
 EXTRA_DIST = tstat.conf configure.ac

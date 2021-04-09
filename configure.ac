@@ -31,8 +31,27 @@ AC_DEFINE([VERSION_DATE], [_version_date], [Package date])
 AC_DEFINE([VERSION_FLAVOR], [_version_flavor], [Package flavor])
 AC_CONFIG_HEADER([config.h])
 
-
+# Check for build system
 #AC_CANONICAL_SYSTEM
+AC_CANONICAL_HOST
+build_linux=no
+build_mac=no
+build_other=no
+
+# Detect the target system
+case "${host_os}" in
+    linux*)
+        build_linux=yes
+        ;;
+    darwin*)
+        build_mac=yes
+        ;;
+    *)
+        build_other=yes
+        ;;
+esac
+AM_CONDITIONAL([LINUX], [test "$build_linux" = "yes"])
+AM_CONDITIONAL([OSX], [test "$build_mac" = "yes"])
 
 m4_pattern_allow([AC_LBL_C_INIT (V_CCOPT, V_INCLS)])
 

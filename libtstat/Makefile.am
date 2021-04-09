@@ -99,7 +99,7 @@ lib =
 lib_hdr = 
 endif
 
-pkgconfigdir = /usr/lib/pkgconfig
+pkgconfigdir = $(prefix)/lib/pkgconfig
 pkgconfig_DATA = libtstat.pc
 
 include $(top_srcdir)/tstat/Makefile.sources
