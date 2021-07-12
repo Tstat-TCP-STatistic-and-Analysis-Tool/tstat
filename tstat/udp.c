@@ -1418,7 +1418,11 @@ udp_flow_stat (struct ip * pip, struct udphdr * pudp, void *plast)
   thisdir->data_bytes += uh_ulen - 8;	/* remove the UDP header */
 
 #ifdef PACKET_STATS
-      thisdir->data_pkts_sum2 += thisdir->data_bytes*thisdir->data_bytes; 
+ {
+  int udp_data_length;
+  
+      udp_data_length = (uh_ulen -8);
+      thisdir->data_pkts_sum2 += udp_data_length*udp_data_length; 
       
       { double current_intertime;
       if (thisdir->seg_count==0)
@@ -1436,7 +1440,7 @@ udp_flow_stat (struct ip * pip, struct udphdr * pudp, void *plast)
 
       if (thisdir->seg_count<MAX_COUNT_SEGMENTS)
        {
-         thisdir->seg_size[thisdir->seg_count] = thisdir->data_bytes;
+         thisdir->seg_size[thisdir->seg_count] = udp_data_length;
 	 if (thisdir->seg_count>0)
 	  {
 	    thisdir->seg_intertime[thisdir->seg_count-1] = current_intertime;
@@ -1445,6 +1449,7 @@ udp_flow_stat (struct ip * pip, struct udphdr * pudp, void *plast)
 
 	 thisdir->seg_count++;
       }
+ }
 #endif
 
 
