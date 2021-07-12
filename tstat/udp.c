@@ -1417,6 +1417,36 @@ udp_flow_stat (struct ip * pip, struct udphdr * pudp, void *plast)
   /* do data stats */
   thisdir->data_bytes += uh_ulen - 8;	/* remove the UDP header */
 
+#ifdef PACKET_STATS
+      thisdir->data_pkts_sum2 += thisdir->data_bytes*thisdir->data_bytes; 
+      
+      { double current_intertime;
+      if (thisdir->seg_count==0)
+       {
+         thisdir->last_seg_time=time2double(current_time);
+       }
+      else
+       {
+         current_intertime = 
+	      time2double(current_time) - thisdir->last_seg_time;
+         thisdir->last_seg_time=time2double(current_time);
+	 thisdir->seg_intertime_sum += current_intertime;
+	 thisdir->seg_intertime_sum2 += current_intertime*current_intertime;
+       }
+
+      if (thisdir->seg_count<MAX_COUNT_SEGMENTS)
+       {
+         thisdir->seg_size[thisdir->seg_count] = thisdir->data_bytes;
+	 if (thisdir->seg_count>0)
+	  {
+	    thisdir->seg_intertime[thisdir->seg_count-1] = current_intertime;
+	  }
+       }
+
+	 thisdir->seg_count++;
+      }
+#endif
+
 
   /* total packets stats */
   ++pup_save->packets;

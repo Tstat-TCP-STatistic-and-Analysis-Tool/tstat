@@ -1243,7 +1243,47 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf (fp, " quic_UA:%d", col++);
      wfprintf (fp, " quic_CHLO:%d", col++);
      wfprintf (fp, " quic_REJ:%d", col++);
-#endif      
+#endif
+#ifdef PACKET_STATS
+       /*******************************
+        * segment sizes 
+        *******************************/
+       wfprintf(fp, " c_pktsize_count:%d", col++);   // number of valid samples (out of MAX_COUNT_SEGMENTS)
+       for (i=0;i<MAX_COUNT_SEGMENTS;i++) 
+         wfprintf (fp, " c_pktsize%d:%d", i+1, col++);
+
+       wfprintf(fp, " s_pktsize_count:%d", col++);	 // number of valid samples (out of MAX_COUNT_SEGMENTS)
+       for (i=0;i<MAX_COUNT_SEGMENTS;i++) 
+         wfprintf (fp, " s_pktsize%d:%d", i+1, col++);
+
+       /*******************************
+        * segment intertimes
+        *******************************/
+       for (i=0; i < MAX_COUNT_SEGMENTS-1; i++)
+           wfprintf (fp, " c_sit%d:%d", i+1, col++);
+
+       for (i=0;i<MAX_COUNT_SEGMENTS-1;i++)
+           wfprintf (fp, " s_sit%d:%d", i+1, col++);
+
+       /*******************************
+        * averages
+        *******************************/
+       wfprintf (fp, " c_pkts_data:%d", col++);
+       wfprintf (fp, " c_pkts_data_avg:%d", col++);
+       wfprintf (fp, " c_pkts_data_std:%d", col++);
+       wfprintf (fp, " s_pkts_data:%d", col++);
+       wfprintf (fp, " s_pkts_data_avg:%d", col++);
+       wfprintf (fp, " s_pkts_data_std:%d", col++);
+
+       wfprintf (fp, " c_seg_cnt:%d", col++);
+       wfprintf (fp, " c_sit_avg:%d", col++);
+       wfprintf (fp, " c_sit_std:%d", col++);
+
+       wfprintf (fp, " s_seg_cnt:%d", col++);
+       wfprintf (fp, " s_sit_avg:%d", col++);
+       wfprintf (fp, " s_sit_std:%d", col++);
+#endif
+      
      wfprintf (fp, "\n");
    }
 

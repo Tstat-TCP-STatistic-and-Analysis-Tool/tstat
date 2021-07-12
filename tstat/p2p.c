@@ -780,6 +780,59 @@ make_p2p_conn_stats (void * flow, int tproto)
   wfprintf (fp_udp_logc, " %d",thisflow->quic_rej);
 #endif      
   
+#ifdef PACKET_STATS
+  {
+    int i;
+
+     /* Segment sizes */
+    wfprintf (fp_udp_logc, " %d",thisC2S->seg_count);
+    for (i=0;i<MAX_COUNT_SEGMENTS;i++) {
+    	wfprintf (fp_udp_logc, " %d",thisC2S->seg_size[i]);
+     }
+
+    wfprintf (fp_udp_logc, " %d",thisS2C->seg_count);
+    for (i=0;i<MAX_COUNT_SEGMENTS;i++) {
+    	wfprintf (fp_udp_logc, " %d",thisS2C->seg_size[i]);
+     }
+
+     /* Segment intertimes */
+    for (i=0;i<MAX_COUNT_SEGMENTS-1;i++) {
+    	wfprintf (fp_udp_logc, " %f",thisC2S->seg_intertime[i]/1000.);
+     }
+
+    for (i=0;i<MAX_COUNT_SEGMENTS-1;i++) {
+    	wfprintf (fp_udp_logc, " %f",thisS2C->seg_intertime[i]/1000.);
+     }
+
+#define MEAN(SUM,ENNE) (((ENNE)>0)?((SUM)*1.0/(ENNE)):0.0)
+#define VAR(ME,SQ,ENNE) (((ENNE)>1)?((SQ)-(ENNE)*(ME)*(ME))/((ENNE)-1):0.0)
+
+    /* Averages */
+     {
+       double mval,varval;
+       mval = MEAN(thisC2S->data_bytes,thisC2S->packets);
+       varval = VAR(mval,thisC2S->data_pkts_sum2,thisC2S->packets);
+       wfprintf (fp_udp_logc, " %d %f %f",thisC2S->packets,mval,sqrt(varval));
+
+       mval = MEAN(thisS2C->data_bytes,thisS2C->packets);
+       varval = VAR(mval,thisS2C->data_pkts_sum2,thisS2C->packets);
+       wfprintf (fp_udp_logc, " %d %f %f",thisS2C->packets,mval,sqrt(varval));
+
+       mval = MEAN(thisC2S->seg_intertime_sum,thisC2S->seg_count-1);
+       varval = VAR(mval,thisC2S->seg_intertime_sum2,thisC2S->seg_count-1);
+       wfprintf (fp_udp_logc, " %d",(thisC2S->seg_count>1)?thisC2S->seg_count:0);
+       wfprintf (fp_udp_logc, " %f %f",mval/1e3,sqrt(varval)/1e3);
+
+       mval = MEAN(thisS2C->seg_intertime_sum,thisS2C->seg_count-1);
+       varval = VAR(mval,thisS2C->seg_intertime_sum2,thisS2C->seg_count-1);
+       wfprintf (fp_udp_logc, " %d",(thisS2C->seg_count>1)?thisS2C->seg_count:0);
+       wfprintf (fp_udp_logc, " %f %f",mval/1e3,sqrt(varval)/1e3);
+
+     }
+  }
+#endif
+  
+  
   wfprintf (fp_udp_logc, "\n");
 
   return;

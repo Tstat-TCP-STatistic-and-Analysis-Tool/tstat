@@ -1094,6 +1094,18 @@ typedef struct ucb
   u_short last_len;		/* length of the last packet  */
   u_short last_checksum;        /* checksum of the last packet */
 #endif
+
+/* Store information on the first MAX_COUNT_SEGMENTS segments */
+#ifdef PACKET_STATS
+ u_int seg_count;
+ u_int seg_size[MAX_COUNT_SEGMENTS];
+ double last_seg_time;
+ double seg_intertime[MAX_COUNT_SEGMENTS];
+ double data_pkts_sum2;
+ double seg_intertime_sum;
+ double seg_intertime_sum2;
+#endif
+
 }
 ucb;
 
