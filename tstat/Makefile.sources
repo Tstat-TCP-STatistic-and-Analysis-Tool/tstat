@@ -1,5 +1,7 @@
 # Source Files
 HDR_FILES = \
+    $(top_srcdir)/tstat/rfc6234/sha.h \
+    $(top_srcdir)/tstat/rfc6234/sha-private.h \
     $(top_srcdir)/tstat/compress.h \
     $(top_srcdir)/tstat/dagtools.h \
     $(top_srcdir)/tstat/dump.h \
@@ -47,7 +49,13 @@ HDR_FILES = \
     $(top_srcdir)/tstat/uthash.h\
     $(top_srcdir)/tstat/globals.h
 
-CFILES=$(top_srcdir)/tstat/compress.c \
+CFILES=$(top_srcdir)/tstat/rfc6234/hkdf.c \
+       $(top_srcdir)/tstat/rfc6234/hmac.c \
+       $(top_srcdir)/tstat/rfc6234/sha1.c \
+       $(top_srcdir)/tstat/rfc6234/sha224-256.c \
+       $(top_srcdir)/tstat/rfc6234/sha384-512.c \
+       $(top_srcdir)/tstat/rfc6234/usha.c \
+       $(top_srcdir)/tstat/compress.c \
        $(top_srcdir)/tstat/etherpeek.c \
        $(top_srcdir)/tstat/mfiles.c \
        $(top_srcdir)/tstat/names.c \

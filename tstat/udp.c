@@ -16,10 +16,16 @@
  *
 */
 
+#ifdef HAVE_CRYPTO
+#include <openssl/evp.h>
+#include <regex.h>
+#endif
 
 #include "tstat.h"
 #include "tcpL7.h"
 #include "dns_cache.h"
+#include "rfc6234/sha.h"
+
 
 #ifdef DNS_CACHE_PROCESSOR
 extern Bool dns_enabled;
@@ -29,6 +35,14 @@ extern Bool dns_enabled;
 #define get_u16(X,O)  (*(tt_uint16 *)(X + O))
 #define get_u32(X,O)  (*(tt_uint32 *)(X + O))
 
+#if __BIG_ENDIAN__
+#define htonll(x) (x)
+#define ntohll(x) (x)
+#else
+#define htonll(x) ((uint64_t)htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32)
+#define ntohll(x) ((uint64_t)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32)
+#endif
+
 extern struct L3_bitrates L3_bitrate;
 extern struct L4_bitrates L4_bitrate;
 
@@ -36,7 +50,9 @@ extern struct L4_bitrates L4_bitrate;
 static int packet_count = 0;
 static int search_count = 0;
 
-
+#ifdef HAVE_CRYPTO
+extern regex_t re_ssl_subject,re_ssl_clean;
+#endif
 
 /* provided globals  */
 int num_udp_pairs = -1;		/* how many pairs we've allocated */
@@ -49,8 +65,6 @@ static udp_pair *NewUTP (struct ip *, struct udphdr *);
 static udp_pair *FindUTP (struct ip *, struct udphdr *, int *);
 
 char *url_encode(char *str);
-#define QUIC_BUFFER_SIZE 1600
-char quic_buffer[QUIC_BUFFER_SIZE+1];
 
 extern unsigned long int fcount;
 extern Bool warn_MAX_;
@@ -672,109 +686,283 @@ void check_uTP(struct ip * pip, struct udphdr * pudp, void *plast,
   return;
 }
 
-void get_QUIC_tags(unsigned char *base, int data_len, ucb *thisdir)
-{
-  int quic_hdr_size=0;
-  int base_string_index;
-  
-  // Verify we do not exceed data_len 
-  if ( !(
-          ( /* QUIC < v46 */
-          ( base[8]==0x0d || base[8]==0x0c || base[8]==0x08 || base[8]==0x09 ) && 
-          ( data_len > 8+14+12+4+4)
-	  )
-	  ||
-          ( /* QUIC >= v46 */
-	  ( base[8]==0xc3 || base[8]==0xd3) && 
-          ( data_len > 8+18+12+4+4)
-          )
-        )
-     )
-    return; /* Minimal conditions failed */
-    
-    // If it is a 0x0d/0x0c/0x08/0x09/0xc3/0xd3, I know quic_hdr_size ; 
-    // check the packet is long enough to perform the check (42 bytes)
-    if ( base[8]==0x0d || base[8]==0x09 )
-      quic_hdr_size = 14;
-    else if ( base[8]==0xd3 || base[8]==0xc3 )
-      quic_hdr_size = 18;
-    else
-      quic_hdr_size = 10;
-   
-    // Check if there it is a CHLO: must add UDP header, Hash, STREAM
-  base_string_index = 8 + quic_hdr_size + 12 + 4;
-    
-  if ( memcmp ( &base[base_string_index], "CHLO", 4) == 0 )
-   {
-     // Get the number of TAGs, which is exatcly after CHLO
-     int tag_nb = get_u32(base,base_string_index + 4);
- 
-     // Calculate base offset
-     int base_offset= 8 + quic_hdr_size + 12 + 12 + 8*tag_nb;
-     // Calculate where to start iterate over TAGs
-     int base_tags= 8 + quic_hdr_size + 12 + 12;
-     int i;
-     int last_tag = 0;
-     
-      thisdir->pup->quic_chlo  = 1 ;
 
-     // Check the packet is long enough to include all the tags
-     if (  data_len < base_tags + tag_nb * 8 )
+#ifdef HAVE_CRYPTO
+
+/* Read Variable Length Integers
+   As Defined in: https://datatracker.ietf.org/doc/html/rfc9000#section-16
+   Input: start
+   Output: result, offset (in Bytes)
+*/
+uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
+
+    uint8_t type =  *(start) >> 6;
+    uint64_t result;
+    if (type==0x00){
+        result = *( (uint8_t*)(start) )& 0x3F;
+        *offset = 1;
+    }
+    else if (type==0x01){
+        result = ntohs(*( (uint16_t*)(start) )) & 0x3FFF;
+        *offset = 2;
+    }
+    else if (type==0x02){
+        result = ntohl(*( (uint32_t*)(start) )) & 0x3FFFFFFF;
+        *offset = 4;
+    }
+    else if (type==0x03){
+        result = htonll(*( (uint64_t*)(start) )) & 0x3FFFFFFFFFFFFFFF;
+        *offset = 16;
+    }
+
+    return result;
+
+}
+
+void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
+
+    int err;
+    EVP_CIPHER_CTX *ctx;
+    int plaintext_len;
+    int ret;
+    unsigned char plaintext [1500];
+    unsigned char client_hello [1500];
+    int OFFSET_DATA=27; // Offeset where QUIC payload begins
+    
+    // Check UDP packet long enough
+    if (data_len<OFFSET_DATA)
         return;
         
-     // Iterate over tags
-     for (i=0;i<tag_nb;i++)
-      {
-        // Get where start this tag
-        int base_this_tag = base_tags + i*8;
-        // Get the offset of data pointed by this tag
-        int tag_value_last_byte = get_u32(base,base_this_tag + 4);
-                 
-        // Match SNI
-        if ( memcmp(&base[base_this_tag], "SNI", 3)==0 && last_tag!=0 )
-         {
-           // Copy SNI
-           int sni_len = tag_value_last_byte - last_tag;
-           // Check the packet is long enough to include SNI
-           if (data_len < base_offset+last_tag + sni_len)
-              return;
-           memcpy( quic_buffer, &base[base_offset+last_tag ], 
-	                        sni_len<QUIC_BUFFER_SIZE?sni_len:QUIC_BUFFER_SIZE);
-           quic_buffer[sni_len<QUIC_BUFFER_SIZE?sni_len:QUIC_BUFFER_SIZE]='\0';
-	   if (thisdir->pup->quic_sni_name==NULL)
-	    { 
-	      thisdir->pup->quic_sni_name = strdup(quic_buffer);
-	    } 
-         }
-        // Match UAID
-        if ( memcmp(&base[base_this_tag], "UAID", 4)==0 && last_tag!=0 )
-	 {
-           // Copy UAID
-           int uaid_len = tag_value_last_byte - last_tag;
-           // Check the packet is long enough to include UAID
-           if (data_len < base_offset+last_tag + uaid_len)
-              return;
-           memcpy( quic_buffer, &base[base_offset+last_tag ], 
-	                        uaid_len<QUIC_BUFFER_SIZE?uaid_len:QUIC_BUFFER_SIZE);
-           quic_buffer[uaid_len<QUIC_BUFFER_SIZE?uaid_len:QUIC_BUFFER_SIZE]='\0';
-           // URLencode the string to remove/hide unwanted chars and 
-	   // to print it as single field in the logs
-	   if (thisdir->pup->quic_ua_string==NULL)
-	    { 
-	      thisdir->pup->quic_ua_string = url_encode(quic_buffer);
-	    } 
-         }
-       // Update previous tag pointed area
-       last_tag = tag_value_last_byte;
-     } // Close for
-   } // Close if (CHLO)
-  else if ( memcmp ( &base[base_string_index - 2], "REJ", 3) == 0 )
-   {
-     thisdir->pup->quic_rej = 1 ;
-   }
+    static const char handshake_salt_v1[20] = {
+        0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
+        0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
+    };
+    
+    // Get initial secret, test on Appendix from https://datatracker.ietf.org/doc/html/rfc9001 with
+    //static const char connid_sample[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08}; 
+    unsigned char initial_secret[SHA256HashSize];
+    err = hkdfExtract(SHA256, handshake_salt_v1, 20, thisdir->QUIC_conn_id, 8, initial_secret);
+    if (err !=0){return;}
 
-  return;
+    //printf("Obtained initial_secret: %02x %02x %02x %02x\n", initial_secret[0], initial_secret[1], initial_secret[2], initial_secret[3] );
+    
+    /* HKDF-Expand-Label from: https://tools.ietf.org/html/rfc8446 */
+    
+    // Client Initial Secret
+    static const char HkdfLabel_client_initial_secret[19] =
+        {0x00, 0x20, 0x0F, 't', 'l', 's', '1', '3', ' ', 'c', 'l', 'i', 'e', 'n', 't', ' ', 'i', 'n', 0x00};
+    unsigned char client_initial_secret[32];     
+    err = hkdfExpand(SHA256, initial_secret, 32, HkdfLabel_client_initial_secret, 19,
+                            client_initial_secret, 32);
+
+    if (err !=0)
+        return;
+
+    //printf("Obtained client_initial_secret: %02x %02x %02x %02x\n", client_initial_secret[0], client_initial_secret[1], client_initial_secret[2], client_initial_secret[3] );
+    
+    // Key
+    static const char HkdfLabel_key[18] =
+        {0x00, 0x10, 0x0E, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'k', 'e', 'y', 0x00};    
+    unsigned char key[16];  
+    err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_key, 18,
+                             key, 16);
+
+    if (err !=0)
+        return;
+
+    //printf("Obtained key: %02x %02x %02x %02x\n", key[0], key[1], key[2], key[3] );
+       
+    // Initialization Vector
+    static const char HkdfLabel_iv[17] =
+        {0x00, 0x0C, 0x0D, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'i', 'v', 0x00};
+        
+    unsigned char iv[12];  
+    err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_iv, 17,
+                             iv, 12);
+
+    if (err !=0)
+        return;
+
+    //printf("Obtained iv: %02x %02x %02x %02x\n", iv[0], iv[1], iv[2], iv[3] ); 
+
+    // Make XOR of packet number:
+    // from https://github.com/NanXiao/code-for-my-blog/blob/master/2020/09/quic_server_initial/main.c)
+    iv[11] = iv[11] ^ 0x01;   
+    
+    /*From: https://wiki.openssl.org/index.php/EVP_Authenticated_Encryption_and_Decryption*/  
+    /* Create and initialise the context */
+    if(!(ctx = EVP_CIPHER_CTX_new()))
+        return;
+    /* Initialise key and IV */
+    if(!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, iv)){
+        EVP_CIPHER_CTX_free(ctx);
+        return;
+    }  
+        
+    if(!EVP_DecryptUpdate(ctx, plaintext, &plaintext_len, data+OFFSET_DATA, data_len - OFFSET_DATA)){ 
+        EVP_CIPHER_CTX_free(ctx);
+        return;
+    }
+
+    /* Clean up */
+    EVP_CIPHER_CTX_free(ctx);
+    
+    //printf("Decrypted: ");           
+    //printf("%02x %02x %02x %02x\n", plaintext[0], plaintext[1], plaintext[2], plaintext[3]); 
+    //printf("Len: %d\n", plaintext_len);  
+    
+    // Process plain text
+    unsigned char * ptr = &plaintext[0];
+    int max_length = 0;
+    while (ptr < plaintext + plaintext_len - 16){
+        if ( *ptr == 0x01 || *ptr == 0x00) // PING or PADDING
+            ptr++;
+        else if ( *ptr == 0x06 ){ //CRYPTO            
+            uint8_t delta = 0;
+            uint8_t delta_tot = 0;
+            uint64_t offset = read_var_len_int(ptr + 1 + delta_tot, &delta);
+            delta_tot += delta ;
+            uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);            
+            delta_tot += delta ;
+                  
+            memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
+            if (offset + length > max_length)
+              max_length = offset + length;
+            ptr=ptr + 1 + delta_tot+length;
+        }
+        else // UNKNOWN FRAME
+          return;
+        
+    } 
+
+    // Parsing from tcpL7.c
+    int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
+    
+    // Add session length = 1st byte of cipher suite section
+    if (idx > max_length) 
+      return;
+
+    idx += 1 + client_hello[idx];
+
+    // Add length of cipher suite section = 1st byte of compression section
+    if (idx + 2 > max_length) 
+      return;
+
+    idx += 2 + ntohs(*(tt_uint16 *)(client_hello+idx)); 
+
+    // Add length of compression section = 1st byte of extensions section
+    if (idx > max_length)
+      return;
+
+    idx += 1 + client_hello[idx];
+
+    // Full extensions section length
+    if (idx + 2 > max_length) 
+      return;
+
+    int all_ext_len = ntohs(*(tt_uint16 *)(client_hello+idx));
+    if (all_ext_len < 0)
+      return;
+    idx += 2; 
+
+    // From tcpL7.c
+    int ii = 0;   // pointer within the current extension
+    int next = 0;
+    char cname[80];
+    int ext_type, ext_len, name_len, j, this_ii;
+    while (ii < all_ext_len && idx+ii < max_length){
+
+        // extract extension type
+        if (idx+ii+2 > max_length) 
+          return;
+        ext_type = ntohs(*(tt_uint16 *)(client_hello+idx+ii));
+        ii += 2;
+
+        // extract extension length
+        if (idx + ii + 2 > max_length) 
+          return;
+        ext_len = ntohs(*(tt_uint16 *)(client_hello + idx + ii));
+        if (ext_len < 0)
+          return;
+        ii += 2;
+
+        switch (ext_type)
+         {
+            // SNI (Server Name Indication)
+            case 0x0000:
+                // extension length
+                if (idx+ii+2 > max_length) 
+                  return;
+                next = ii + ext_len;
+
+                // skip up to the 1st byte of "Server Name"
+                ii += 3;
+                if (idx+ii+2 > max_length) 
+                  return;
+                name_len = ntohs(*(tt_uint16 *)(client_hello+idx+ii));
+                ii += 2;
+
+                // copy server name
+                if (idx+ii > max_length) 
+                  return;
+                for (j=0; j < name_len && j < 79 && idx+ii+j < max_length; j++)
+                 {
+                    cname[j]=client_hello[idx+ii+j];
+                 }
+                cname[j]='\0';
+
+                // crosscheck that subject has a reasonable syntax
+                if (regexec(&re_ssl_subject,cname, (size_t) 0, NULL, 0)==0)
+                {
+                  if (regexec(&re_ssl_clean,cname, (size_t) 0, NULL, 0)==0)
+
+                    if (thisdir->pup->quic_sni_name==NULL){
+                      thisdir->pup->quic_sni_name = strdup(cname);
+                    }
+                }
+
+                ii = next;
+                break;
+            // QUIC transport parameters
+            case 0x0039:
+                this_ii = ii;
+                while(this_ii < ii + ext_len){
+                    
+                    // Read Type and Len
+                    uint8_t offset = 0;
+                    uint8_t offset_tot = 0;
+                    if (idx+this_ii+offset_tot > max_length) return;
+                    uint64_t param_type = read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
+                    offset_tot +=offset;
+                    if (idx+this_ii+offset_tot > max_length) return;
+                    uint64_t param_len =  read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
+                    offset_tot +=offset;
+
+                    // Find Google User Agent
+                    if (param_type == 0x3129){
+                        if (idx+this_ii+offset_tot + param_len > max_length) return;
+                        memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
+                        cname[min(80, param_len)]=='\0';
+                        for (int c = 0; c<strlen(cname);c++)
+                            if(cname[c]==' ' || cname[c]=='\n' || cname[c]<0x20 || cname[c]>0x7e  )
+                              cname[c] = '\t';
+                            thisdir->pup->quic_ua_string = strdup(cname);
+                    }
+                    this_ii += offset_tot + param_len;
+                }
+
+                ii += ext_len;
+                break;
+
+            default:
+                ii += ext_len;
+                break;
+         }
+     }
+
+    return;                     
 }
+#endif
 
 void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                 ucb *thisdir, ucb *otherdir)
@@ -801,297 +989,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
 //  if ( base[8] > 0x3F )
 //    return; /* Minimal protocol matching failed*/
 
-  if (base[8] <= 0x3F)
-  { // Original QUIC matching for version <= 43
-  switch(thisdir->QUIC_state)
-   {
-/*
-  The QUIC framing has a 2-19 byte header, starting with a
-  public flag byte.
-  The format for the public flag is 
-  00 xx yy r v (Reserved - SeqNr size - ConnID size - Reset - Version)
-  
-  A brief capture shows reasonable usage of:
-  0x0d -> Client opening, 8 byte CID, Version, 1 byte SeqNr - OPEN_CID_1B_V
-  0x0c -> Reopening/data, 8 byte CID, 1 byte SeqNr            DATA_CID_1B
-  0x1c -> Reopening/data, 8 byte CID, 2 byte SeqNr            DATA_CID_2B
-  0x00 -> Data, No CID, 1 byte SeqNr                          DATA_1B
-  0x10 -< Data, No CID, 2 byte SeqNr                          DATA_1B
-  
-  Currently (May 2015) either no CID or 8 byte CID are used.
-  Other sizes for CID or SeqNr seem not used.
-  
-  SeqNr may be 1 byte or more... and the sender can just send the 
-  LSB of the current SeqNr.
 
-  Since we are going to ignore the MSB of the SeqNr, we might just consider 3 states,
-  OPENV, OPEN, DATA
-  
-  Possible rules
-  
-  Unknown -> 0x0d -> OPENV -> OPENV_SENT -> is_QUIC
-  Unknown -> 0x0c -> OPEN  -> OPEN_SENT
-  Unknown -> 0x1c -> OPEN  -> OPEN_SENT
-  Unknown -> 0x00 -> DATA  -> DATA_SENT
-  Unknown -> 0x10 -> DATA  -> DATA_SENT
-  OPEN_SENT -> 0x0c/0x1c -> DATA_ID -> if CID == CID and SeqNr = SeqNr+1 -> is_QUIC
-  DATA_SENT -> 0x00/0x10 -> DATA -> if SeqNr == SeqNr+1 -> is_QUIC
-
-  For 'safeness' we might ignore DATA frames (0x00/0x01) until OPENV/OPEN has been seen in the opposite direction
-  
-  Let's start with unidirectional status, just checking CID and SeqNr.
-  Depending on the result, we might correlate the two directions.
-
-  Oct  2016 - 
-  It seems a new logic has been introduced in QUIC. 
-  ConnID Size is now always 8 bytes, and some server packets can contain a Diversification Nonce.
-  This means that the bits yy of the flag are now two different fields <ConnID present> (bit 0x08) 
-  and <Diversification Nonce used> (bit 0x04)
-  The usage of the Nonce is declared at the opening but the field is actually present only in 
-  server generated packets.
-  This means that there are new Data states 0x04 and 0x14 where the SeqNr is at offset 8+1+32= 41 (since the
-  Diversification Nonce, when present, precedes the SeqNr).
-  The OPEN packets have states 0x08/0x18 (like 0x0c and 0x1c) and 0x09 (like 0x0d) but the SeqNr position is
-  the same.
-  
-*/
-     case QUIC_UNKNOWN:
-       switch (base[8])
-        {
-	  case 0x0d:
-	  case 0x09:
-	     if (base[17]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	      {
-	        thisdir->QUIC_seq_nr = base[21];
-	        memcpy(thisdir->QUIC_conn_id,base+9,8);
-	        thisdir->QUIC_state=QUIC_OPENV_SENT;
-	        /* If SeqNr == 1, the match is strong enough to guarantee the classification */
-                if (thisdir->QUIC_seq_nr == 1)
-	          thisdir->is_QUIC = 1;
-	      }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	     break;
-	  case 0x0c:
-	  case 0x08:
-	  case 0x18:
-	  case 0x1c:
-	     thisdir->QUIC_seq_nr = (int)base[17];
-	     memcpy(thisdir->QUIC_conn_id,base+9,8);
-	     thisdir->QUIC_state=QUIC_OPEN_SENT;
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		// This is the first in this direction. Let's check if the 
-		// CID in this direction is the same than the one in the opposite direction
-		if (memcmp(thisdir->QUIC_conn_id,otherdir->QUIC_conn_id,8)==0)
-		 {
-	            thisdir->is_QUIC = 1;
-		 }
-	      }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x00:
-	  case 0x10:
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-	        thisdir->QUIC_seq_nr = (int)base[9];
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-	      }	
-	    break;
-	  case 0x04:
-	  case 0x14:
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN && data_len > 42 )
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-	        thisdir->QUIC_seq_nr = (int)base[41];
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-	      }	
-	    break;
-	  default:
-	    break;
-	
-	}
-       break;
-     case QUIC_OPENV_SENT:
-     case QUIC_OPEN_SENT:
-       /* If we are here, we still have to see meaningful information in both directions */
-       /* If there is an CID, We expect to match the ID with the previous ID state, and that the sequence number is +1 */
-       switch (base[8])
-        {
-	  case 0x09:
-	  case 0x0d:
-	    if (base[17]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	     {
-	       seq_nr = (int)base[21];
-	       memcpy(connection_id,base+9,8);
-	       if ( memcmp(connection_id,thisdir->QUIC_conn_id,8)==0 &&
-		      (seq_nr == thisdir->QUIC_seq_nr + 1) )
-		 {
-		   thisdir->QUIC_seq_nr = seq_nr;
-		   thisdir->is_QUIC = 1;  
-		 }
-	       else
-		 {
-		   /* Update the information, overriding the previous status */
-		   memcpy(thisdir->QUIC_conn_id,connection_id,8);
-		   thisdir->QUIC_seq_nr = seq_nr;
-	           thisdir->QUIC_state=QUIC_OPENV_SENT;
-                   if (thisdir->QUIC_seq_nr == 1)
-	              thisdir->is_QUIC = 1;
-		 }
-	     }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x08:
-	  case 0x0c:
-	  case 0x18:
-	  case 0x1c:
-	    /* We match with the previous in the same direction */
-	    seq_nr = (int)base[17];
-	    memcpy(connection_id,base+9,8);
-	    if ( memcmp(connection_id,thisdir->QUIC_conn_id,8)==0 &&
-		 (seq_nr == thisdir->QUIC_seq_nr + 1) )
-	      {
-		thisdir->QUIC_seq_nr = seq_nr;
-		thisdir->is_QUIC = 1;  
-	      }
-	    else
-	      {
-		/* Update the information */
-		memcpy(thisdir->QUIC_conn_id,connection_id,8);
-		thisdir->QUIC_seq_nr = seq_nr;
-	        thisdir->QUIC_state=QUIC_OPEN_SENT;
-	      }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x00:
-	  case 0x10:
-	    /* If we are here, we had a previous OPEN state, but now we have some DATA */
-	    /* We use the previous logic, and elaborate only if the status in the opposite direction */
-	    /* is not unknown */
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-	        thisdir->QUIC_seq_nr = (int)base[9];
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-	      }	
-	    break;
-	  case 0x04:
-	  case 0x14:
-	    /* If we are here, we had a previous OPEN state, but now we have some DATA */
-	    /* We use the previous logic, and elaborate only if the status in the opposite direction */
-	    /* is not unknown */
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN && data_len > 42 )
-	      {
-		/* Given the lightweight matching, we wait until the other direction has started
-		   the QUIC classification
-		*/
-	        thisdir->QUIC_seq_nr = (int)base[41];
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-	      }	
-	    break;
-	  default:
-	    break;
-	}
-       break;
-     case QUIC_DATA_SENT:
-       /* If we are here, we started the classification in the opposite direction, and we started seeing data in this direction */ 
-       switch (base[8])
-        {
-	  case 0x09:
-	  case 0x0d:
-	    /* Another OPENV - Reset the status */
-	    if (base[17]==0x51) // 'Q', first char of the QUIC version string 'Qxxx'
-	     {
-	       thisdir->QUIC_seq_nr = base[21];
-	       memcpy(thisdir->QUIC_conn_id,base+9,8);
-	       thisdir->QUIC_state=QUIC_OPENV_SENT;
-	       /* If SeqNr == 1, the match is strong enough to guarantee the classification */
-               if (thisdir->QUIC_seq_nr == 1)
-	          thisdir->is_QUIC = 1;
-	     }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x08:
-	  case 0x0c:
-	  case 0x18:
-	  case 0x1c:
-	    /* Another OPEN - Reset the status */
-	     thisdir->QUIC_seq_nr = (int)base[17];
-	     memcpy(thisdir->QUIC_conn_id,base+9,8);
-	     thisdir->QUIC_state=QUIC_OPEN_SENT;
-	     if (otherdir->QUIC_state!=QUIC_UNKNOWN)
-	      {
-		// This is the first in this direction. Let's check if the 
-		// CID in this direction is the same than the one in the opposite direction
-		if (memcmp(thisdir->QUIC_conn_id,otherdir->QUIC_conn_id,8)==0)
-		 {
-	            thisdir->is_QUIC = 1;
-		 }
-	      }
-#ifdef QUIC_DETAILS      
-             get_QUIC_tags(base,data_len,thisdir);
-#endif      
-	    break;
-	  case 0x00:
-	  case 0x10:
-	    /* If we are here, we had a previous DATA state, we match the sequence number */
-	     seq_nr = (int)base[9];
-	     if ( seq_nr == thisdir->QUIC_seq_nr + 1 )
-	      {
-		thisdir->QUIC_seq_nr = seq_nr;
-		thisdir->is_QUIC = 1;  
-	      }
-	     else
-	      {
-		thisdir->QUIC_seq_nr = seq_nr;
-	        thisdir->QUIC_state=QUIC_DATA_SENT;
-	      }
-	    break;
-	  case 0x04:
-	  case 0x14:
-	    /* If we are here, we had a previous DATA state, we match the sequence number */
-	     if (data_len > 42 )
-	      { /* For safety, only check when the packet is large enough */
-	        seq_nr = (int)base[41];
-	        if ( seq_nr == thisdir->QUIC_seq_nr + 1 )
-	         {
-		   thisdir->QUIC_seq_nr = seq_nr;
-		   thisdir->is_QUIC = 1;  
-	         }
-	        else
-	         {
-		   thisdir->QUIC_seq_nr = seq_nr;
-	           thisdir->QUIC_state=QUIC_DATA_SENT;
-	         }
-	      }
-	    break;
-	  default:
-	    break;
-	}
-       break;
-     default:
-       break;
-   }
-  } // end if < 0x3f
-  else
-  {
     /* New code for Google QUIC Version >= 46 */
   switch(thisdir->QUIC_state)
    {
@@ -1109,6 +1007,9 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
             memcpy(thisdir->QUIC_vers,base+9,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,base+14,8); // Save the connection ID
             thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
+            #ifdef HAVE_CRYPTO
+            search_QUIC_SNI(thisdir, base, data_len);
+            #endif
 
         }
         
@@ -1134,7 +1035,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
        break;
      default:
        break;
-   }
+   
   }
    
   if (thisdir->is_QUIC==1 && otherdir->is_QUIC==1)
@@ -1842,4 +1743,7 @@ char *url_decode(char *str)
   *pbuf = '\0';
   return buf;
 }
+
+
+
 
