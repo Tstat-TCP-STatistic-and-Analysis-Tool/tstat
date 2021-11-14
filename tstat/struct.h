@@ -1052,7 +1052,7 @@ typedef struct ucb
   int uTP_syn_seq_nr;
   Bool is_uTP;
   enum QUIC_udp_state QUIC_state;
-  char QUIC_conn_id[8];
+  char QUIC_conn_id[20];
   char QUIC_vers [4];
   int QUIC_seq_nr;
   int QUIC_dir; /* 0 (client side) / 1 (server side) */

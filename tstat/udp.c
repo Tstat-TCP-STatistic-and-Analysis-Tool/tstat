@@ -18,6 +18,7 @@
 
 #ifdef HAVE_CRYPTO
 #include <openssl/evp.h>
+#include <openssl/aes.h>
 #include <regex.h>
 #endif
 
@@ -719,7 +720,7 @@ uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
 
 }
 
-void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
+void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payload_offset,  int conn_id_len){
 
     int err;
     EVP_CIPHER_CTX *ctx;
@@ -727,51 +728,44 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
     int ret;
     unsigned char plaintext [1500];
     unsigned char client_hello [1500];
-    int OFFSET_DATA=27; // Offeset where QUIC payload begins
     
     // Check UDP packet long enough
-    if (data_len<OFFSET_DATA)
+    if (data_len<payload_offset)
         return;
         
+    // Must be updated in future versions
     static const char handshake_salt_v1[20] = {
         0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
         0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
     };
     
     // Get initial secret, test on Appendix from https://datatracker.ietf.org/doc/html/rfc9001 with
-    //static const char connid_sample[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08}; 
-    unsigned char initial_secret[SHA256HashSize];
-    err = hkdfExtract(SHA256, handshake_salt_v1, 20, thisdir->QUIC_conn_id, 8, initial_secret);
-    if (err !=0){return;}
+    static const char connid_sample[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08}; 
 
-    //printf("Obtained initial_secret: %02x %02x %02x %02x\n", initial_secret[0], initial_secret[1], initial_secret[2], initial_secret[3] );
+    unsigned char initial_secret[SHA256HashSize];
+    err = hkdfExtract(SHA256, handshake_salt_v1, 20, thisdir->QUIC_conn_id, conn_id_len, initial_secret);
+    if (err !=0)
+      return;
     
-    /* HKDF-Expand-Label from: https://tools.ietf.org/html/rfc8446 */
-    
-    // Client Initial Secret
+    /* HKDF-Expand-Label from: https://tools.ietf.org/html/rfc8446 
+       Client Initial Secret:  */
     static const char HkdfLabel_client_initial_secret[19] =
         {0x00, 0x20, 0x0F, 't', 'l', 's', '1', '3', ' ', 'c', 'l', 'i', 'e', 'n', 't', ' ', 'i', 'n', 0x00};
     unsigned char client_initial_secret[32];     
     err = hkdfExpand(SHA256, initial_secret, 32, HkdfLabel_client_initial_secret, 19,
                             client_initial_secret, 32);
-
     if (err !=0)
         return;
 
-    //printf("Obtained client_initial_secret: %02x %02x %02x %02x\n", client_initial_secret[0], client_initial_secret[1], client_initial_secret[2], client_initial_secret[3] );
-    
-    // Key
+    //  Key
     static const char HkdfLabel_key[18] =
         {0x00, 0x10, 0x0E, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'k', 'e', 'y', 0x00};    
     unsigned char key[16];  
     err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_key, 18,
                              key, 16);
-
     if (err !=0)
         return;
 
-    //printf("Obtained key: %02x %02x %02x %02x\n", key[0], key[1], key[2], key[3] );
-       
     // Initialization Vector
     static const char HkdfLabel_iv[17] =
         {0x00, 0x0C, 0x0D, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'i', 'v', 0x00};
@@ -779,37 +773,46 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
     unsigned char iv[12];  
     err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_iv, 17,
                              iv, 12);
-
     if (err !=0)
         return;
 
-    //printf("Obtained iv: %02x %02x %02x %02x\n", iv[0], iv[1], iv[2], iv[3] ); 
+    // Header Protection
+    static const char HkdfLabel_hp[17] =
+        {0x00, 0x10, 0x0D, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'h', 'p', 0x00};
+    unsigned char hp[16];  
+    err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_hp, 17,
+                             hp, 16);
+    if (err !=0)
+        return;
+
+    /* Decrypt Header */
+    AES_KEY decKey;
+    if (AES_set_encrypt_key(hp, 128, &decKey) < 0 || payload_offset+3 + 16 > data_len)
+      return;
+    // Mask obtained from encrypting first 16B with 'hp', but assuming 4B pkt len
+    AES_encrypt(data+payload_offset+3, plaintext, &decKey);
+    // Note: Working only for packet numbers of 1B
+    uint8_t pkn = ((uint8_t)*(data+payload_offset-1)) ^ plaintext[1]; 
 
     // Make XOR of packet number:
-    // from https://github.com/NanXiao/code-for-my-blog/blob/master/2020/09/quic_server_initial/main.c)
-    iv[11] = iv[11] ^ 0x01;   
+    // from https://github.com/NanXiao/code-for-my-blog/blob/master/2020/09/quic_server_initial/main.c
+    iv[11] = iv[11] ^ pkn; //0x01;   
     
-    /*From: https://wiki.openssl.org/index.php/EVP_Authenticated_Encryption_and_Decryption*/  
-    /* Create and initialise the context */
+    /* From: https://wiki.openssl.org/index.php/EVP_Authenticated_Encryption_and_Decryption*/  
+    /* Decrypt Payload */
     if(!(ctx = EVP_CIPHER_CTX_new()))
         return;
-    /* Initialise key and IV */
     if(!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, iv)){
         EVP_CIPHER_CTX_free(ctx);
         return;
     }  
-        
-    if(!EVP_DecryptUpdate(ctx, plaintext, &plaintext_len, data+OFFSET_DATA, data_len - OFFSET_DATA)){ 
+    if(!EVP_DecryptUpdate(ctx, plaintext, &plaintext_len, data+payload_offset, data_len - payload_offset)){ 
         EVP_CIPHER_CTX_free(ctx);
         return;
     }
 
     /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
-    
-    //printf("Decrypted: ");           
-    //printf("%02x %02x %02x %02x\n", plaintext[0], plaintext[1], plaintext[2], plaintext[3]); 
-    //printf("Len: %d\n", plaintext_len);  
     
     // Process plain text
     unsigned char * ptr = &plaintext[0];
@@ -830,8 +833,9 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
               max_length = offset + length;
             ptr=ptr + 1 + delta_tot+length;
         }
-        else // UNKNOWN FRAME
-          return;
+        else{ // UNKNOWN FRAME
+          break;
+        }
         
     } 
 
@@ -926,21 +930,25 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
             // QUIC transport parameters
             case 0x0039:
                 this_ii = ii;
-                while(this_ii < ii + ext_len){
+
+                while(this_ii < ii + ext_len && this_ii>=0){
                     
                     // Read Type and Len
                     uint8_t offset = 0;
                     uint8_t offset_tot = 0;
-                    if (idx+this_ii+offset_tot > max_length) return;
+                    if (idx+this_ii+offset_tot > max_length )
+                      return;
                     uint64_t param_type = read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
                     offset_tot +=offset;
-                    if (idx+this_ii+offset_tot > max_length) return;
+                    if (idx+this_ii+offset_tot > max_length)
+                      return;
                     uint64_t param_len =  read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
                     offset_tot +=offset;
 
                     // Find Google User Agent
                     if (param_type == 0x3129){
-                        if (idx+this_ii+offset_tot + param_len > max_length) return;
+                        if (idx+this_ii+offset_tot + param_len > max_length)
+                          return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]=='\0';
                         for (int c = 0; c<strlen(cname);c++)
@@ -964,6 +972,55 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len){
 }
 #endif
 
+typedef struct {
+  uint8_t header_form   : 1;
+  uint8_t fixed_bit     : 1;
+  uint8_t spin_bit      : 1;
+  uint8_t packet_type   : 2;
+  uint8_t reserved      : 2;
+  uint8_t packet_nb_len : 2;
+  uint8_t version[4]       ;
+  uint8_t dcid_len         ;
+  uint8_t dcid[20]         ;
+  uint8_t scid_len         ;
+  uint8_t scid[20]         ;
+} quic_hdr;
+
+quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
+
+    quic_hdr hdr;
+    memset(&hdr, 0, sizeof(hdr));
+
+    if (data_len<13)
+      return hdr;
+
+    hdr.header_form = (base[8] & ( 1 << 7 )) >> 7;
+    hdr.fixed_bit = (base[8] & ( 1 << 6 )) >> 6;
+
+    if (hdr.header_form == 1){ // Long Packet
+        hdr.packet_type = (base[8] & ( 3 << 4 )) >> 4;
+        hdr.reserved = (base[8] & ( 3 << 2 )) >> 2; 
+        hdr.packet_nb_len = ((base[8] & ( 3 << 0 )) >> 0) + 1;
+        memcpy(hdr.version, base + 9, 4);
+
+        hdr.dcid_len = base[13];
+        if (hdr.dcid_len > 20 || 13 + 1 + hdr.dcid_len > data_len)
+          return hdr;
+        memcpy(hdr.dcid, base + 13 + 1, hdr.dcid_len);
+
+        hdr.scid_len = base[13 + 1 + hdr.dcid_len];
+        if (hdr.scid_len > 20 || 13 + 1 + hdr.dcid_len + 1 + hdr.scid_len > data_len)
+          return hdr;
+        memcpy(hdr.scid, base + 13 + 1 + hdr.dcid_len + 1, hdr.scid_len);
+    }
+    else // Short Packet
+      hdr.spin_bit = (base[8] & ( 1 << 5 )) >> 5;
+
+    return hdr;
+}
+
+
+
 void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                 ucb *thisdir, ucb *otherdir)
 {
@@ -985,10 +1042,6 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
   if (data_len < 27 || payload_len == 0)
     return;  /* Minimum safe QUIC size is probably 8+19 bytes */
 
-// -MMM- This limitation is not valid anymore    
-//  if ( base[8] > 0x3F )
-//    return; /* Minimal protocol matching failed*/
-
 
     /* New code for Google QUIC Version >= 46 */
   switch(thisdir->QUIC_state)
@@ -1001,33 +1054,41 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
      case QUIC_UNKNOWN:
      case QUIC_OPEN_SENT:
         
-        // Look for initial packets with DCID and no SCID. This is an "Initial" from the client
-        if ( ( (base[8] & 0xF0) == 0xC0) && (base[13] == 8) && (base[22] == 0) ){
+        ;
+        quic_hdr hdr;
+        hdr = parse_quic_hdr(base, data_len);
 
-            memcpy(thisdir->QUIC_vers,base+9,4); // Save the version
-            memcpy(thisdir->QUIC_conn_id,base+14,8); // Save the connection ID
+        //printf("HDR: %d TYPE: %d, FX: %d, DLEN: %d, SLEN:  %d\n", hdr.header_form, hdr.packet_type, hdr.fixed_bit, hdr.dcid_len, hdr.scid_len);
+
+        // Look for initial packets with DCID and no SCID. This is an "Initial" from the client
+        if ( otherdir->QUIC_state != QUIC_OPEN_SENT &&
+             hdr.header_form == 1 && hdr.packet_type == 0 &&
+             hdr.dcid_len > 0     && hdr.fixed_bit == 1   &&
+             hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
+        
+            memcpy(thisdir->QUIC_vers,hdr.version,4); // Save the version
+            memcpy(thisdir->QUIC_conn_id,hdr.dcid,hdr.dcid_len); // Save the connection ID
             thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
             #ifdef HAVE_CRYPTO
-            search_QUIC_SNI(thisdir, base, data_len);
+            search_QUIC_SNI(thisdir, base, data_len, 19 + hdr.dcid_len + hdr.scid_len, hdr.dcid_len );
             #endif
-
         }
         
-        // Look for "Initial" or "0-RTT" packets with SCID and no DCID. This is from the server.
+        // Look for "Initial" packets with SCID and no DCID. This is from the server.
         // We also must have observed at least one Initial from the client.
-        else if ( (( (base[8] & 0xF0) == 0xC0) || ( (base[8] & 0xF0) == 0xD0) ) &&
-                  (base[13] == 0) && (base[14] == 8) &&
-                  ( otherdir->QUIC_state == QUIC_OPEN_SENT) ) {
+        else if ( otherdir->QUIC_state == QUIC_OPEN_SENT &&
+                  hdr.header_form == 1 && hdr.packet_type == 0 && 
+                  hdr.scid_len > 0     && hdr.fixed_bit == 1   &&
+                  hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
                   
-            memcpy(thisdir->QUIC_vers,base+9,4); // Save the version
-            memcpy(thisdir->QUIC_conn_id,base+15,8); // Save the connection ID
+            memcpy(thisdir->QUIC_vers,hdr.version,4); // Save the version
+            memcpy(thisdir->QUIC_conn_id,hdr.scid,hdr.scid_len);// Save the connection ID
             
-            // If the SCID and DCID and the version is the same, we have QUIC
-            if ( ( memcmp(thisdir->QUIC_conn_id, otherdir->QUIC_conn_id, 8) == 0 ) &&
-                 ( memcmp(thisdir->QUIC_vers, otherdir->QUIC_vers, 4) == 0 ) ){
+            // If the version is the same, we have QUIC
+            if ( memcmp(thisdir->QUIC_vers, otherdir->QUIC_vers, 4) == 0 ){
             
                 thisdir->QUIC_state = otherdir->QUIC_state = QUIC_DATA_SENT; // Mark the flow forever
-                thisdir->is_QUIC = otherdir->is_QUIC = 1;     
+                thisdir->is_QUIC = otherdir->is_QUIC = 1; 
             }                
                   
         }
