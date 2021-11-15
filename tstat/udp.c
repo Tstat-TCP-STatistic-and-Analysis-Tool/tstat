@@ -939,11 +939,11 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                     // Read Type and Len
                     uint8_t offset = 0;
                     uint8_t offset_tot = 0;
-                    if (idx+this_ii+offset_tot > max_length )
+                    if (idx+this_ii+offset_tot + 4 > max_length )
                       return;
                     uint64_t param_type = read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
                     offset_tot +=offset;
-                    if (idx+this_ii+offset_tot > max_length)
+                    if (idx+this_ii+offset_tot + 4 > max_length)
                       return;
                     uint64_t param_len =  read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
                     offset_tot +=offset;
