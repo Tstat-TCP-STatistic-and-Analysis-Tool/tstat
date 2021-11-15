@@ -730,7 +730,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     unsigned char client_hello [1500];
     
     // Check UDP packet long enough
-    if (data_len<payload_offset)
+    if (data_len<payload_offset || payload_offset<19)
         return;
         
     // Must be updated in future versions
@@ -790,8 +790,6 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     if (AES_set_encrypt_key(hp, 128, &decKey) < 0 || payload_offset+3 + 16 > data_len)
       return;
     // Mask obtained from encrypting first 16B with 'hp', but assuming 4B pkt len
-    if (payload_offset+3+16>data_len)
-      return;
     AES_encrypt(data+payload_offset+3, plaintext, &decKey);
     // Note: Working only for packet numbers of 1B
     uint8_t pkn = ((uint8_t)*(data+payload_offset-1)) ^ plaintext[1]; 
@@ -815,23 +813,24 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 
     /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
- 
+
     // Process plain text
     unsigned char * ptr = &plaintext[0];
     int max_length = 0;
-    while (ptr < plaintext + plaintext_len - 16){
+    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext){
         if ( *ptr == 0x01 || *ptr == 0x00) // PING or PADDING
             ptr++;
-        else if ( *ptr == 0x06 ){ //CRYPTO            
+        else if ( *ptr == 0x06 ){ //CRYPTO
             uint8_t delta = 0;
             uint8_t delta_tot = 0;
             uint64_t offset = read_var_len_int(ptr + 1 + delta_tot, &delta);
             delta_tot += delta ;
-            uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);            
+            uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);
             delta_tot += delta ;
 
-            if (ptr + 1 + delta_tot + length > plaintext + plaintext_len - 16)
-              return;
+            if (ptr + 1 + delta_tot + length > plaintext + plaintext_len - 16 ||
+                offset + length > 1500 )
+               return;
 
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             if (offset + length > max_length)
@@ -841,8 +840,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
         else{ // UNKNOWN FRAME
           break;
         }
-        
-    } 
+    }
 
     // Parsing from tcpL7.c
     int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
