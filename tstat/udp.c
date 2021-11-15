@@ -790,6 +790,8 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     if (AES_set_encrypt_key(hp, 128, &decKey) < 0 || payload_offset+3 + 16 > data_len)
       return;
     // Mask obtained from encrypting first 16B with 'hp', but assuming 4B pkt len
+    if (payload_offset+3+16>data_len)
+      return;
     AES_encrypt(data+payload_offset+3, plaintext, &decKey);
     // Note: Working only for packet numbers of 1B
     uint8_t pkn = ((uint8_t)*(data+payload_offset-1)) ^ plaintext[1]; 
@@ -950,7 +952,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 
                     // Find Google User Agent
                     if (param_type == 0x3129){
-                        if (idx+this_ii+offset_tot + param_len > max_length)
+                        if (idx+this_ii+offset_tot + param_len > max_length && idx+this_ii+offset_tot + param_len >= 0)
                           return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]=='\0';
