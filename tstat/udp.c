@@ -951,10 +951,13 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                           return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]=='\0';
+                        /* Sostituito con il precedente URLencode -MMM- 
                         for (int c = 0; c<strlen(cname);c++)
                             if(cname[c]==' ' || cname[c]=='\n' || cname[c]<0x20 || cname[c]>0x7e  )
                               cname[c] = '\t';
                             thisdir->pup->quic_ua_string = strdup(cname);
+			*/
+                            thisdir->pup->quic_ua_string = url_encode(cname);
                     }
                     this_ii += offset_tot + param_len;
                 }
