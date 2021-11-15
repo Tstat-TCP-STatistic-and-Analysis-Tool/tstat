@@ -4132,7 +4132,8 @@ freequad (quadrant ** ppquad)
 void print_periodic_log(tcp_pair * ptp_save) {
 
     /* TUPLE */
-
+    if (!fp_periodic_logc)
+      return;
     if (ptp_save->crypto_src==FALSE)
         wfprintf (fp_periodic_logc, "%s", HostName (ptp_save->addr_pair.a_address));
     else
