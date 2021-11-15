@@ -374,6 +374,11 @@ typedef struct tcb
   u_long cwin_max;
   u_long cwin_min;
 
+  #ifdef LOG_PERIODIC
+  u_long cwin_max_periodic;
+  u_long cwin_min_periodic;
+  #endif
+
   /* RTT stats for singly-transmitted segments */
   double rtt_last;		/* RTT as of last good ACK (microseconds) */
   u_long rtt_min;
@@ -792,6 +797,14 @@ struct stcp_pair
   
   /* Exclude packets from this flow when generating the tcp_complete.pcap */
    Bool stop_dumping_tcp;
+
+  #ifdef LOG_PERIODIC
+  /* log periodic*/
+  timeval last_print_time;
+  tcb last_print_c2s;
+  tcb last_print_s2c;
+  #endif //LOG_PERIODIC
+
 };
 typedef struct stcp_pair tcp_pair;
 

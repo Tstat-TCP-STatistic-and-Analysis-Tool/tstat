@@ -16,7 +16,7 @@
  *
 */
 
-#ifdef HAVE_CRYPTO
+#ifdef HAVE_OPENSSL
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <regex.h>
@@ -51,7 +51,7 @@ extern struct L4_bitrates L4_bitrate;
 static int packet_count = 0;
 static int search_count = 0;
 
-#ifdef HAVE_CRYPTO
+#ifdef HAVE_OPENSSL
 extern regex_t re_ssl_subject,re_ssl_clean;
 #endif
 
@@ -688,7 +688,7 @@ void check_uTP(struct ip * pip, struct udphdr * pudp, void *plast,
 }
 
 
-#ifdef HAVE_CRYPTO
+#ifdef HAVE_OPENSSL
 
 /* Read Variable Length Integers
    As Defined in: https://datatracker.ietf.org/doc/html/rfc9000#section-16
@@ -951,13 +951,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                           return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]=='\0';
-                        /* Sostituito con il precedente URLencode -MMM- 
-                        for (int c = 0; c<strlen(cname);c++)
-                            if(cname[c]==' ' || cname[c]=='\n' || cname[c]<0x20 || cname[c]>0x7e  )
-                              cname[c] = '\t';
-                            thisdir->pup->quic_ua_string = strdup(cname);
-			*/
-                            thisdir->pup->quic_ua_string = url_encode(cname);
+                        thisdir->pup->quic_ua_string = url_encode(cname);
                     }
                     this_ii += offset_tot + param_len;
                 }
@@ -1072,9 +1066,9 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
             memcpy(thisdir->QUIC_vers,hdr.version,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,hdr.dcid,hdr.dcid_len); // Save the connection ID
             thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
-            #ifdef HAVE_CRYPTO
+#ifdef HAVE_OPENSSL
             search_QUIC_SNI(thisdir, base, data_len, 19 + hdr.dcid_len + hdr.scid_len, hdr.dcid_len );
-            #endif
+#endif
         }
         
         // Look for "Initial" packets with SCID and no DCID. This is from the server.

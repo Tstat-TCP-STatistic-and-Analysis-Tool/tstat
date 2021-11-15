@@ -33,6 +33,7 @@ extern FILE *fp_lognc;
 extern FILE *fp_rtp_logc;
 extern FILE *fp_video_logc;
 extern FILE *fp_streaming_logc;
+extern FILE *fp_periodic_logc;
 
 extern Bool is_stdin;
 extern Bool printticks;
@@ -52,6 +53,8 @@ extern Bool strict_privacy;
 #ifdef DNS_CACHE_PROCESSOR
 extern Bool dns_enabled;
 #endif
+
+#define LOG_PERIODIC_INTERVAL_MS 1000.0
 
 Bool thread_stats_flag = FALSE;	/* parameter used to make not possible that two
 				   istances of the same thread can run at the same time */
@@ -79,6 +82,7 @@ static ptp_snap **FindTTP (struct ip *, struct tcphdr *, int *);
 static void free_tp (tcp_pair * ptp_save);
 static int ConnReset (tcp_pair *);
 static int ConnComplete (tcp_pair *);
+void print_periodic_log(tcp_pair * ptp_save);
 /*
 static u_int SynCount (tcp_pair * ptp);
 */
@@ -542,6 +546,11 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   ptp->ssl_client_early_data = FALSE;
   ptp->ssl_server_hello_retry = FALSE;
   
+  #ifdef LOG_PERIODIC
+  // LOG_PERIODIC
+  ptp->last_print_time = current_time;
+  #endif //LOG_PERIODIC
+
   return (&ttp[num_tcp_pairs]);
 }
 
@@ -821,6 +830,16 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       ++tcp_trace_count_local;
     }
 
+
+  /*MT: log periodic - Do this before updating counters*/
+#ifdef LOG_PERIODIC
+    if ( elapsed(ptp_save->last_print_time, current_time)/1000.0 > LOG_PERIODIC_INTERVAL_MS) {
+
+      print_periodic_log(ptp_save);
+
+   }
+
+#endif //LOG_PERIODIC
 
   /* do time stats */
   if (ZERO_TIME (&ptp_save->first_time))
@@ -1431,6 +1450,16 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
         }
       if ((int32_t) cwin > 0 && ((thisdir->cwin_min == 0) || (cwin < thisdir->cwin_min)))
 	thisdir->cwin_min = cwin;
+       
+    #ifdef LOG_PERIODIC
+      if ((int32_t) cwin > 0 && cwin > thisdir->cwin_max_periodic ) {
+	    thisdir->cwin_max_periodic = cwin;
+        }
+      if ((int32_t) cwin > 0 && ((thisdir->cwin_min_periodic == 0) || (cwin < thisdir->cwin_min_periodic))){
+	    thisdir->cwin_min_periodic = cwin;
+        }
+    #endif
+
     }
 
   /* Count TCP messages and track message sizes.
@@ -2964,6 +2993,10 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
   }
 #endif
 
+  #ifdef LOG_PERIODIC
+  print_periodic_log(ptp_save);
+  #endif //LOG_PERIODIC
+
   /* Statistics from the plugins */
 
   /* TCP proto stats should be done only for complete flows 
@@ -4093,3 +4126,109 @@ freequad (quadrant ** ppquad)
   quadrant_release (*ppquad);
   *ppquad = NULL;
 }
+
+
+#ifdef LOG_PERIODIC
+void print_periodic_log(tcp_pair * ptp_save) {
+
+    /* TUPLE */
+
+    if (ptp_save->crypto_src==FALSE)
+        wfprintf (fp_periodic_logc, "%s", HostName (ptp_save->addr_pair.a_address));
+    else
+        wfprintf (fp_periodic_logc, "%s", HostNameEncrypted (ptp_save->addr_pair.a_address));
+
+    wfprintf (fp_periodic_logc, " %s", ServiceName (ptp_save->addr_pair.a_port));
+
+    if (ptp_save->crypto_dst==FALSE)
+        wfprintf (fp_periodic_logc, " %s", HostName (ptp_save->addr_pair.b_address));
+    else
+        wfprintf (fp_periodic_logc, " %s", HostNameEncrypted (ptp_save->addr_pair.b_address));
+
+    wfprintf (fp_periodic_logc, " %s", ServiceName (ptp_save->addr_pair.b_port));
+
+    /* TIME */
+
+    wfprintf (fp_periodic_logc, " %f %f %f %f",
+              time2double(ptp_save->last_print_time)/1000.0,
+              elapsed(ptp_save->first_time, ptp_save->last_print_time)/1000.0,
+              elapsed(ptp_save->first_time, ptp_save->last_time)/1000.0,
+              elapsed(ptp_save->last_print_time, ptp_save->last_time)/1000.0
+             );
+
+    /* Packets and bytes*/
+
+    wfprintf (fp_periodic_logc,
+              " %lu %u %lu %lu %lu %lu %lu %u %u %u %d %d",
+              ptp_save->c2s.packets - ptp_save->last_print_c2s.packets,
+              ptp_save->c2s.reset_count - ptp_save->last_print_c2s.reset_count,
+              ptp_save->c2s.ack_pkts - ptp_save->last_print_c2s.ack_pkts,
+              ptp_save->c2s.pureack_pkts - ptp_save->last_print_c2s.pureack_pkts,
+              ptp_save->c2s.unique_bytes - ptp_save->last_print_c2s.unique_bytes,
+              ptp_save->c2s.data_pkts - ptp_save->last_print_c2s.data_pkts,
+              ptp_save->c2s.data_bytes - ptp_save->last_print_c2s.data_bytes,
+              ptp_save->c2s.rexmit_pkts - ptp_save->last_print_c2s.rexmit_pkts,
+              ptp_save->c2s.rexmit_bytes - ptp_save->last_print_c2s.rexmit_bytes,
+              ptp_save->c2s.out_order_pkts - ptp_save->last_print_c2s.out_order_pkts,
+              ptp_save->c2s.syn_count - ptp_save->last_print_c2s.syn_count,
+              ptp_save->c2s.fin_count - ptp_save->last_print_c2s.fin_count);
+
+    wfprintf (fp_periodic_logc,
+              " %lu %u %lu %lu %lu %lu %lu %u %u %u %d %d",
+              ptp_save->s2c.packets - ptp_save->last_print_s2c.packets,
+              ptp_save->s2c.reset_count - ptp_save->last_print_s2c.reset_count,
+              ptp_save->s2c.ack_pkts - ptp_save->last_print_s2c.ack_pkts,
+              ptp_save->s2c.pureack_pkts - ptp_save->last_print_s2c.pureack_pkts,
+              ptp_save->s2c.unique_bytes - ptp_save->last_print_s2c.unique_bytes,
+              ptp_save->s2c.data_pkts - ptp_save->last_print_s2c.data_pkts,
+              ptp_save->s2c.data_bytes - ptp_save->last_print_s2c.data_bytes,
+              ptp_save->s2c.rexmit_pkts - ptp_save->last_print_s2c.rexmit_pkts,
+              ptp_save->s2c.rexmit_bytes - ptp_save->last_print_s2c.rexmit_bytes,
+              ptp_save->s2c.out_order_pkts - ptp_save->last_print_s2c.out_order_pkts,
+              ptp_save->s2c.syn_count - ptp_save->last_print_s2c.syn_count,
+              ptp_save->s2c.fin_count - ptp_save->last_print_s2c.fin_count);
+
+    /* RTT */
+    wfprintf (fp_periodic_logc,
+              " %f %u",
+              Average(ptp_save->c2s.rtt_sum   - ptp_save->last_print_c2s.rtt_sum,
+                      ptp_save->c2s.rtt_count - ptp_save->last_print_c2s.rtt_count) / 1000.0 ,
+              ptp_save->c2s.rtt_count  - ptp_save->last_print_c2s.rtt_count);
+
+    wfprintf (fp_periodic_logc,
+              " %f %u",
+              Average(ptp_save->s2c.rtt_sum   - ptp_save->last_print_s2c.rtt_sum ,
+                      ptp_save->s2c.rtt_count - ptp_save->last_print_s2c.rtt_count) / 1000.0,
+              ptp_save->s2c.rtt_count  - ptp_save->last_print_s2c.rtt_count);
+
+    /*  Congestion Window*/
+    wfprintf (fp_periodic_logc,
+              " %u %u %u %u",
+              ptp_save->c2s.cwin_min_periodic,
+              ptp_save->c2s.cwin_max_periodic,
+              ptp_save->s2c.cwin_min_periodic,
+              ptp_save->s2c.cwin_max_periodic);
+
+    /* SACKs sent */
+    wfprintf (fp_periodic_logc,
+              " %u %u",
+              ptp_save->c2s.sacks_sent - ptp_save->last_print_c2s.sacks_sent,
+              ptp_save->s2c.sacks_sent - ptp_save->last_print_s2c.sacks_sent);
+
+    /* new line */
+    wfprintf (fp_periodic_logc, "\n");
+
+    /*update counters*/
+    ptp_save->last_print_time = current_time; //ptp_save->last_time;
+    ptp_save->last_print_c2s = ptp_save->c2s;
+    ptp_save->last_print_s2c = ptp_save->s2c;
+
+    ptp_save->c2s.cwin_min_periodic = 0;
+    ptp_save->c2s.cwin_max_periodic = 0;
+
+    ptp_save->s2c.cwin_min_periodic = 0;
+    ptp_save->s2c.cwin_max_periodic = 0;
+
+}
+
+#endif //LOG_PERIODIC

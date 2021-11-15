@@ -315,6 +315,10 @@ FILE *fp_dup_ooo_log;
 FILE *fp_video_logc = NULL;
 #endif
 
+#ifdef LOG_PERIODIC
+FILE *fp_periodic_logc = NULL;
+#endif
+
 FILE *fp_http_logc = NULL;
 
 #ifdef HAVE_LDNS
@@ -1585,7 +1589,80 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf(fp," jitter90k_min:%d", col++);	 // 10: client jitter (min)
      wfprintf (fp, "\n");
    }
-  
+
+    /**************************************************
+     * LOG_PERIODIC
+     **************************************************/
+  else if (log_type == LOG_PERIODIC_COMPLETE) 
+   {
+     col = 1;
+
+
+       wfprintf(fp, "#c_ip:%d", col++); 	  // 1: ip address
+       wfprintf(fp, " c_port:%d", col++);	  // 2: port 
+       wfprintf(fp, " s_ip:%d", col++); 	  // 45: ip address
+       wfprintf(fp, " s_port:%d", col++);	  // 46: port 
+
+        /********************************
+         * timestamps 
+         ********************************/
+       wfprintf(fp, " time_abs_start:%d", col++);	// 90: first packet absolute
+       wfprintf(fp, " time_rel_start:%d", col++);	// 90: first packet absolute
+       wfprintf(fp, " time_rel_end:%d", col++); 	// 91: last packet absolute
+       wfprintf(fp, " bin_duration:%d", col++); 	// 91: last packet absolute
+
+       wfprintf(fp, " c_pkts_all:%d", col++);	  // 3: total number of segments uploaded
+       wfprintf(fp, " c_rst_cnt:%d", col++);	  // 4: number of RST pkts sent
+       wfprintf(fp, " c_ack_cnt:%d", col++);	  // 5: number of pkts with ACK flag set
+       wfprintf(fp, " c_ack_cnt_p:%d", col++);    // 6: number of pure ACK pkts (i.e. ACK set but no payload)
+       wfprintf(fp, " c_bytes_uniq:%d", col++);   // 7: number of unique bytes uploaded
+       wfprintf(fp, " c_pkts_data:%d", col++);    // 8: number of segments with payload
+       wfprintf(fp, " c_bytes_all:%d", col++);    // 9: total number of bytes = unique + retransmitted
+       wfprintf(fp, " c_pkts_retx:%d", col++);    // 10: number of segments retransmitted
+       wfprintf(fp, " c_bytes_retx:%d", col++);   // 11: number of bytes retransmitted
+       wfprintf(fp, " c_pkts_ooo:%d", col++);	  // 12: number of packets out of order
+       wfprintf(fp, " c_syn_cnt:%d", col++);	  // 13: number of segments with SYN set
+       wfprintf(fp, " c_fin_cnt:%d", col++);	  // 14: number of segments with FIN set
+
+        /*******************************
+         * server stats
+         *******************************/
+       wfprintf(fp, " s_pkts_all:%d", col++);	  // 47: total number of segments uploaded
+       wfprintf(fp, " s_rst_cnt:%d", col++);	  // 48: number of RST pkts sent
+       wfprintf(fp, " s_ack_cnt:%d", col++);	  // 49: number of pkts with ACK flag set
+       wfprintf(fp, " s_ack_cnt_p:%d", col++);    // 50: number of pure ACK pkts (i.e. ACK set but no payload)
+       wfprintf(fp, " s_bytes_uniq:%d", col++);   // 51: number of unique bytes
+       wfprintf(fp, " s_pkts_data:%d", col++);    // 52: number of segments with payload
+       wfprintf(fp, " s_bytes_all:%d", col++);    // 53: total number of bytes = unique + retransmitted
+       wfprintf(fp, " s_pkts_retx:%d", col++);    // 54: number of segments retransmitted
+       wfprintf(fp, " s_bytes_retx:%d", col++);   // 55: number of bytes retransmitted
+       wfprintf(fp, " s_pkts_ooo:%d", col++);	  // 56: number of packets out of order
+       wfprintf(fp, " s_syn_cnt:%d", col++);	  // 57: number of segments with SYN set
+       wfprintf(fp, " s_fin_cnt:%d", col++);	  // 58: number of segments with FIN set
+
+
+        /********************************
+         * basic L7 info 
+         ********************************/
+
+       wfprintf(fp, " c_rtt_avg:%d", col++);	  // 29: RTT average
+       wfprintf(fp, " c_rtt_cnt:%d", col++);	  // 33: number of RTT valid samples
+       wfprintf(fp, " s_rtt_avg:%d", col++);	  // 73: RTT average
+       wfprintf(fp, " s_rtt_cnt:%d", col++);	  // 77: number of RTT valid samples
+
+       // CWND
+       wfprintf(fp, " c_cwin_min:%d", col++);
+       wfprintf(fp, " c_cwin_max:%d", col++);
+       wfprintf(fp, " s_cwin_min:%d", col++);
+       wfprintf(fp, " s_cwin_max:%d", col++);
+
+       // Sacks
+       wfprintf(fp, " c_sack_cnt:%d", col++);
+       wfprintf(fp, " s_sack_cnt:%d", col++);
+
+       wfprintf (fp, "\n");
+   }
+
 }
 
 char * old_filename;
@@ -1722,6 +1799,13 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
       reopen_logfile(&fp_http_logc,basename,"log_http_complete");
       write_log_header(fp_http_logc,LOG_HTTP_COMPLETE);
   }
+
+#ifdef LOG_PERIODIC
+  if (LOG_IS_ENABLED(LOG_PERIODIC_COMPLETE)) {
+      reopen_logfile(&fp_periodic_logc,basename,"log_periodic_complete");
+      write_log_header(fp_periodic_logc, LOG_PERIODIC_COMPLETE);
+  }
+#endif
 
 //AF: this is legacy code
 #ifdef LOG_OOO
@@ -4612,6 +4696,13 @@ void log_parse_ini_arg(char *param_name, param_value enabled) {
     else if (strcmp(param_name, "log_http_complete") == 0) {
         log_parse_ini_arg_log_bitmask(fp_http_logc, LOG_HTTP_COMPLETE, "log_http_complete", enabled.value.ivalue);
     }
+#ifdef LOG_PERIODIC
+    else if (strcmp(param_name, "log_periodic_complete") == 0) {
+        log_parse_ini_arg_log_bitmask(fp_periodic_logc, LOG_PERIODIC_COMPLETE, "log_periodic_complete", enabled.value.ivalue);
+    }
+#endif
+
+
     else if (strcmp(param_name, "log_dns_complete") == 0) {
 #ifdef HAVE_LDNS
         log_parse_ini_arg_log_bitmask(fp_dns_logc, LOG_DNS_COMPLETE, "log_dns_complete", enabled.value.ivalue);

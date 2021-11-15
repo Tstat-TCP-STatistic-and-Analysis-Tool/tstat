@@ -294,21 +294,21 @@ fi
 
 
 ######################
-## CRYPTO library
-## --enable-crypto option
-ENABLE_CRYPTO=no
-AC_ARG_ENABLE(crypto, 
-    AS_HELP_STRING([--enable-crypto], [enable decoding QUIC client hello. Requires openssl-dev]),
-    ENABLE_CRYPTO=$enableval)
-AM_CONDITIONAL([CRYPTO], [test "x$ENABLE_CRYPTO" = "xyes"])
-if test ".${ENABLE_CRYPTO}" = ".yes"; then
-  AC_CHECK_LIB([crypto], [EVP_DecryptInit_ex], [AC_CHECK_HEADERS(openssl/evp.h, have_crypto=yes, have_crypto=no)], [have_crypto=no])
-  if test "x$have_crypto" = "xyes"; then
-    V_DEFINES="$V_DEFINES -DHAVE_CRYPTO"
+## OPENSSL library
+## --enable-openssl option
+ENABLE_OPENSSL=no
+AC_ARG_ENABLE(openssl, 
+    AS_HELP_STRING([--enable-openssl], [enable decoding QUIC client hello. Requires openssl-dev]),
+    ENABLE_OPENSSL=$enableval)
+AM_CONDITIONAL([OPENSSL], [test "x$ENABLE_OPENSSL" = "xyes"])
+if test ".${ENABLE_OPENSSL}" = ".yes"; then
+  AC_CHECK_LIB([crypto], [EVP_DecryptInit_ex], [AC_CHECK_HEADERS(openssl/evp.h, have_openssl=yes, have_openssl=no)], [have_openssl=no])
+  if test "x$have_openssl" = "xyes"; then
+    V_DEFINES="$V_DEFINES -DHAVE_OPENSSL"
     LIBS="$LIBS -lcrypto"
   fi
 else
-  have_crypto=no
+  have_openssl=no
 fi
 
 
@@ -351,5 +351,5 @@ echo \
     - ldns      ${have_ldns}
     - libtstat  ${ENABLE_LIBTSTAT}
     - rrdthread ${ENABLE_RRDTHREAD}
-    - crypto    ${have_crypto}
+    - openssl   ${have_openssl}
 --------------------------------------------------"

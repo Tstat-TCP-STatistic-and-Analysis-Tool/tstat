@@ -47,7 +47,8 @@ HDR_FILES = \
     $(top_srcdir)/tstat/base64.h\
     $(top_srcdir)/tstat/rijndael.h\
     $(top_srcdir)/tstat/uthash.h\
-    $(top_srcdir)/tstat/globals.h
+    $(top_srcdir)/tstat/globals.h\
+    $(top_srcdir)/tstat/log_dns.h
 
 CFILES=$(top_srcdir)/tstat/rfc6234/hkdf.c \
        $(top_srcdir)/tstat/rfc6234/hmac.c \

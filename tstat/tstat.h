@@ -844,6 +844,7 @@ extern  long log_bitmask;
 #ifdef HAVE_LDNS
 #define LOG_DNS_COMPLETE        0x0400
 #endif //HAVE_LDNS
+#define LOG_PERIODIC_COMPLETE      0x0800
 // overall mask
 #define LOG_ALL                 (((1<<9)-1))
 
