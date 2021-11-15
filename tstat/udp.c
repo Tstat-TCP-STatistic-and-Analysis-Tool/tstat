@@ -813,7 +813,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 
     /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
-    
+ 
     // Process plain text
     unsigned char * ptr = &plaintext[0];
     int max_length = 0;
@@ -827,7 +827,10 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
             delta_tot += delta ;
             uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);            
             delta_tot += delta ;
-                  
+
+            if (ptr + 1 + delta_tot + length > plaintext + plaintext_len - 16)
+              return;
+
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             if (offset + length > max_length)
               max_length = offset + length;
