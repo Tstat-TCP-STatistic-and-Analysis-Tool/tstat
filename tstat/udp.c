@@ -265,9 +265,8 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
 
   pup->quic_sni_name = NULL;
   pup->quic_ua_string = NULL;
-  pup->quic_chlo = 0;
-  pup->quic_rej = 0;
-  
+  memset(pup->quic_c_vers, 0, 4);
+  memset(pup->quic_s_vers, 0, 4);
   pup->is_stun_initiated = 0;
   
   return (utp[num_udp_pairs]);
@@ -817,7 +816,9 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     // Process plain text
     unsigned char * ptr = &plaintext[0];
     int max_length = 0;
-    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext){
+    int iterations = 0;
+    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= 1500){
+        iterations ++;
         if ( *ptr == 0x01 || *ptr == 0x00) // PING or PADDING
             ptr++;
         else if ( *ptr == 0x06 ){ //CRYPTO
@@ -933,8 +934,8 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
             // QUIC transport parameters
             case 0x0039:
                 this_ii = ii;
-
-                while(this_ii < ii + ext_len && this_ii>=0){
+                iterations = 0;
+                while(this_ii < ii + ext_len && this_ii>=0 && iterations <= 1500){
                     
                     // Read Type and Len
                     uint8_t offset = 0;
@@ -957,6 +958,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                         thisdir->pup->quic_ua_string = url_encode(cname);
                     }
                     this_ii += offset_tot + param_len;
+                    iterations ++;
                 }
 
                 ii += ext_len;
@@ -1066,7 +1068,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
              hdr.dcid_len > 0     && hdr.fixed_bit == 1   &&
              hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
         
-            memcpy(thisdir->QUIC_vers,hdr.version,4); // Save the version
+            memcpy(thisdir->pup->quic_c_vers,hdr.version,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,hdr.dcid,hdr.dcid_len); // Save the connection ID
             thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
 #ifdef HAVE_OPENSSL
@@ -1081,11 +1083,11 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                   hdr.scid_len > 0     && hdr.fixed_bit == 1   &&
                   hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
                   
-            memcpy(thisdir->QUIC_vers,hdr.version,4); // Save the version
+            memcpy(thisdir->pup->quic_s_vers,hdr.version,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,hdr.scid,hdr.scid_len);// Save the connection ID
             
             // If the version is the same, we have QUIC
-            if ( memcmp(thisdir->QUIC_vers, otherdir->QUIC_vers, 4) == 0 ){
+            if ( memcmp(thisdir->pup->quic_c_vers, thisdir->pup->quic_s_vers, 4) == 0 ){
             
                 thisdir->QUIC_state = otherdir->QUIC_state = QUIC_DATA_SENT; // Mark the flow forever
                 thisdir->is_QUIC = otherdir->is_QUIC = 1; 

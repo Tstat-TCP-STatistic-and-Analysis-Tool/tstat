@@ -1245,8 +1245,8 @@ void write_log_header(FILE *fp, int log_type)
 #ifdef QUIC_DETAILS      
      wfprintf (fp, " quic_SNI:%d", col++);
      wfprintf (fp, " quic_UA:%d", col++);
-     wfprintf (fp, " quic_CHLO:%d", col++);
-     wfprintf (fp, " quic_REJ:%d", col++);
+     wfprintf (fp, " quic_c_vers:%d", col++);
+     wfprintf (fp, " quic_s_vers:%d", col++);
 #endif
 #ifdef PACKET_STATS
        /*******************************

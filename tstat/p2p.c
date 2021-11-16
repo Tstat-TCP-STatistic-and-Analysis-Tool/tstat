@@ -776,8 +776,17 @@ make_p2p_conn_stats (void * flow, int tproto)
 #ifdef QUIC_DETAILS      
   wfprintf (fp_udp_logc, " %s",thisflow->quic_sni_name!=NULL?StringEncryptedBase64(thisflow->quic_sni_name):"-");
   wfprintf (fp_udp_logc, " %s",thisflow->quic_ua_string!=NULL?StringEncryptedBase64(thisflow->quic_ua_string):"-");
-  wfprintf (fp_udp_logc, " %d",thisflow->quic_chlo);
-  wfprintf (fp_udp_logc, " %d",thisflow->quic_rej);
+  
+  if (thisflow->c2s.is_QUIC == 1 && thisflow->s2c.is_QUIC == 1){
+        wfprintf (fp_udp_logc, " 0x%08x", ntohl(*(uint32_t*)(thisflow->quic_c_vers)) );
+        wfprintf (fp_udp_logc, " 0x%08x", ntohl(*(uint32_t*)(thisflow->quic_s_vers)) );
+  }
+  else{
+        wfprintf (fp_udp_logc, " -" ); 
+        wfprintf (fp_udp_logc, " -" );
+  }
+  
+
 #endif      
   
 #ifdef PACKET_STATS

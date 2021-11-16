@@ -1066,7 +1066,6 @@ typedef struct ucb
   Bool is_uTP;
   enum QUIC_udp_state QUIC_state;
   char QUIC_conn_id[20];
-  char QUIC_vers [4];
   int QUIC_seq_nr;
   int QUIC_dir; /* 0 (client side) / 1 (server side) */
   Bool is_QUIC;
@@ -1164,6 +1163,8 @@ struct sudp_pair
   /* QUIC info */
   char *quic_sni_name;
   char *quic_ua_string;
+  char quic_c_vers [4];
+  char quic_s_vers [4];
   Bool quic_chlo;
   Bool quic_rej;
 
