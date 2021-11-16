@@ -925,7 +925,8 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                   if (regexec(&re_ssl_clean,cname, (size_t) 0, NULL, 0)==0)
 
                     if (thisdir->pup->quic_sni_name==NULL){
-                      thisdir->pup->quic_sni_name = strdup(cname);
+                      thisdir->pup->quic_sni_name = url_encode(cname);
+                      //printf("%s\n", thisdir->pup->quic_sni_name);
                     }
                 }
 
@@ -1021,13 +1022,13 @@ quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
         if (hdr.packet_type == 0){
             unsigned char * ptr = base + 13 + 1 + hdr.dcid_len + 1 + hdr.scid_len;
             uint8_t token_len_len = 0;
-            if (ptr + 4 > base + data_len)
+            if (ptr + 4 > base + data_len || ptr < base)
               return hdr;
             uint64_t token_len = read_var_len_int(ptr, &token_len_len);
             hdr.token_len = token_len_len + token_len; // Include both len and token
             uint8_t pkt_len_len = 0;
             ptr += token_len_len + token_len;
-            if (ptr + 4 > base + data_len)
+            if (ptr + 4 > base + data_len || ptr < base)
               return hdr;
             hdr.pkt_len = read_var_len_int(ptr, &pkt_len_len);
         }
@@ -1091,7 +1092,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
 #ifdef HAVE_OPENSSL
             search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr.dcid_len );
 #endif
-       
+
         }
         
         // Look for "Initial" packets with SCID and no DCID. This is from the server.
@@ -1103,7 +1104,9 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                   
             memcpy(thisdir->pup->quic_s_vers,hdr.version,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,hdr.scid,hdr.scid_len);// Save the connection ID
-            
+#ifdef HAVE_OPENSSL // Search also in "response" to handle out of order
+            search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr.dcid_len );
+#endif          
             // If the version is the same, we have QUIC
             if ( memcmp(thisdir->pup->quic_c_vers, thisdir->pup->quic_s_vers, 4) == 0 ){
             
