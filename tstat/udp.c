@@ -267,7 +267,9 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
   pup->quic_ua_string = NULL;
   memset(pup->quic_c_vers, 0, 4);
   memset(pup->quic_s_vers, 0, 4);
+  pup->quic_zero_rtt = 0;
   pup->is_stun_initiated = 0;
+  
   
   return (utp[num_udp_pairs]);
 }
@@ -687,6 +689,24 @@ void check_uTP(struct ip * pip, struct udphdr * pudp, void *plast,
 }
 
 
+
+typedef struct {
+  uint8_t header_form   : 1;
+  uint8_t fixed_bit     : 1;
+  uint8_t spin_bit      : 1;
+  uint8_t packet_type   : 2;
+  uint8_t reserved      : 2;
+  uint8_t packet_nb_len : 2;
+  uint8_t version[4]       ;
+  uint8_t dcid_len         ;
+  uint8_t dcid[20]         ;
+  uint8_t scid_len         ;
+  uint8_t scid[20]         ;
+  uint8_t token_len        ;
+  uint64_t pkt_len         ;
+} quic_hdr;
+
+
 #ifdef HAVE_OPENSSL
 
 /* Read Variable Length Integers
@@ -719,7 +739,7 @@ uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
 
 }
 
-void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payload_offset,  int conn_id_len){
+void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payload_offset, quic_hdr hdr  ){
 
     int err;
     EVP_CIPHER_CTX *ctx;
@@ -727,7 +747,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     int ret;
     unsigned char plaintext [1500];
     unsigned char client_hello [1500];
-    
+    int conn_id_len = hdr.dcid_len;
     // Check UDP packet long enough
     if (data_len<payload_offset || payload_offset<19)
         return;
@@ -817,7 +837,9 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     unsigned char * ptr = &plaintext[0];
     int max_length = 0;
     int iterations = 0;
-    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= 1500){
+
+    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= 1500 &&
+           ptr < plaintext + hdr.pkt_len -18 ){
         iterations ++;
         if ( *ptr == 0x01 || *ptr == 0x00) // PING or PADDING
             ptr++;
@@ -828,15 +850,15 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
             delta_tot += delta ;
             uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);
             delta_tot += delta ;
-
-            if (ptr + 1 + delta_tot + length > plaintext + plaintext_len - 16 ||
+            if (ptr + 1 + delta_tot + length > plaintext + plaintext_len ||
                 offset + length > 1500 )
-               return;
+               break;
 
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             if (offset + length > max_length)
               max_length = offset + length;
             ptr=ptr + 1 + delta_tot+length;
+            
         }
         else{ // UNKNOWN FRAME
           break;
@@ -845,7 +867,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 
     // Parsing from tcpL7.c
     int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
-    
+  
     // Add session length = 1st byte of cipher suite section
     if (idx > max_length) 
       return;
@@ -878,6 +900,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     int next = 0;
     char cname[81];
     int ext_type, ext_len, name_len, j, this_ii;
+    
     while (ii < all_ext_len && idx+ii < max_length){
 
         // extract extension type
@@ -893,7 +916,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
         if (ext_len < 0)
           return;
         ii += 2;
-
+        
         switch (ext_type)
          {
             // SNI (Server Name Indication)
@@ -975,52 +998,36 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 }
 #endif
 
-typedef struct {
-  uint8_t header_form   : 1;
-  uint8_t fixed_bit     : 1;
-  uint8_t spin_bit      : 1;
-  uint8_t packet_type   : 2;
-  uint8_t reserved      : 2;
-  uint8_t packet_nb_len : 2;
-  uint8_t version[4]       ;
-  uint8_t dcid_len         ;
-  uint8_t dcid[20]         ;
-  uint8_t scid_len         ;
-  uint8_t scid[20]         ;
-  uint8_t token_len        ;
-  uint64_t pkt_len          ;
-} quic_hdr;
-
 quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
 
     quic_hdr hdr;
     memset(&hdr, 0, sizeof(hdr));
 
-    if (data_len<13)
+    if (data_len<5)
       return hdr;
 
-    hdr.header_form = (base[8] & ( 1 << 7 )) >> 7;
-    hdr.fixed_bit = (base[8] & ( 1 << 6 )) >> 6;
+    hdr.header_form = (base[0] & ( 1 << 7 )) >> 7;
+    hdr.fixed_bit = (base[0] & ( 1 << 6 )) >> 6;
 
     if (hdr.header_form == 1){ // Long Packet
-        hdr.packet_type = (base[8] & ( 3 << 4 )) >> 4;
-        hdr.reserved = (base[8] & ( 3 << 2 )) >> 2; 
-        hdr.packet_nb_len = ((base[8] & ( 3 << 0 )) >> 0) + 1;
-        memcpy(hdr.version, base + 9, 4);
+        hdr.packet_type = (base[0] & ( 3 << 4 )) >> 4;
+        hdr.reserved = (base[0] & ( 3 << 2 )) >> 2; 
+        hdr.packet_nb_len = ((base[0] & ( 3 << 0 )) >> 0) + 1;
+        memcpy(hdr.version, base + 1, 4);
 
-        hdr.dcid_len = base[13];
-        if (hdr.dcid_len > 20 || 13 + 1 + hdr.dcid_len > data_len)
+        hdr.dcid_len = base[5];
+        if (hdr.dcid_len > 20 || 5 + 1 + hdr.dcid_len > data_len)
           return hdr;
-        memcpy(hdr.dcid, base + 13 + 1, hdr.dcid_len);
+        memcpy(hdr.dcid, base + 5 + 1, hdr.dcid_len);
 
-        hdr.scid_len = base[13 + 1 + hdr.dcid_len];
-        if (hdr.scid_len > 20 || 13 + 1 + hdr.dcid_len + 1 + hdr.scid_len > data_len)
+        hdr.scid_len = base[5 + 1 + hdr.dcid_len];
+        if (hdr.scid_len > 20 || 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len > data_len)
           return hdr;
-        memcpy(hdr.scid, base + 13 + 1 + hdr.dcid_len + 1, hdr.scid_len);
+        memcpy(hdr.scid, base + 5 + 1 + hdr.dcid_len + 1, hdr.scid_len);
         
         // Search token and len only in initial packets
         if (hdr.packet_type == 0){
-            unsigned char * ptr = base + 13 + 1 + hdr.dcid_len + 1 + hdr.scid_len;
+            unsigned char * ptr = base + 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len;
             uint8_t token_len_len = 0;
             if (ptr + 4 > base + data_len || ptr < base)
               return hdr;
@@ -1034,7 +1041,7 @@ quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
         }
     }
     else // Short Packet
-      hdr.spin_bit = (base[8] & ( 1 << 5 )) >> 5;
+      hdr.spin_bit = (base[0] & ( 1 << 5 )) >> 5;
 
     return hdr;
 }
@@ -1076,45 +1083,56 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
         
         ;
         quic_hdr hdr;
-        hdr = parse_quic_hdr(base, data_len);
+        hdr = parse_quic_hdr(base + 8, data_len - 8);
 
         //printf("HDR: %d TYPE: %d, FX: %d, DLEN: %d, SLEN:  %d\n", hdr.header_form, hdr.packet_type, hdr.fixed_bit, hdr.dcid_len, hdr.scid_len);
 
-        // Look for initial packets with DCID and no SCID. This is an "Initial" from the client
-        if ( otherdir->QUIC_state != QUIC_OPEN_SENT &&
-             hdr.header_form == 1 && hdr.packet_type == 0 &&
-             hdr.dcid_len > 0     && hdr.fixed_bit == 1   &&
+        // Look for initial well-formed packets
+        if ( hdr.header_form == 1 && hdr.packet_type == 0 &&
+             hdr.fixed_bit == 1   &&
              hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
         
-            memcpy(thisdir->pup->quic_c_vers,hdr.version,4); // Save the version
             memcpy(thisdir->QUIC_conn_id,hdr.dcid,hdr.dcid_len); // Save the connection ID
-            thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
+            
+            // Look for Client Packets with DCID in case in state UNK
+            if ( hdr.dcid_len > 0 && otherdir->QUIC_state != QUIC_OPEN_SENT){
+                memcpy(thisdir->pup->quic_c_vers,hdr.version,4); // Save the version
+                thisdir->QUIC_state=QUIC_OPEN_SENT; // Set is as "open", we have see an "Initial" packet
+            } 
+            
+            // Look for Server Packets with SCID in case in state QUIC_OPEN_SENT
+            else if ( hdr.scid_len > 0 && otherdir->QUIC_state == QUIC_OPEN_SENT){
+                memcpy(thisdir->pup->quic_s_vers,hdr.version,4); // Save the version
+                
+                if ( memcmp(thisdir->pup->quic_c_vers, thisdir->pup->quic_s_vers, 4) == 0 ){
+                    thisdir->QUIC_state = otherdir->QUIC_state = QUIC_DATA_SENT; // Mark the flow forever
+                    thisdir->is_QUIC = otherdir->is_QUIC = 1;
+                }
+                
+            }
+           
 #ifdef HAVE_OPENSSL
-            search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr.dcid_len );
+            search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr );
 #endif
 
-        }
+            // Search 0-RTT
+            unsigned char * ptr_next = base + 17 +
+                                       hdr.dcid_len + hdr.scid_len + hdr.token_len + hdr.pkt_len;
+            if (ptr_next + 5 < base + data_len ){
+                quic_hdr hdr_second = parse_quic_hdr(ptr_next, 5);
+                if (hdr_second.packet_type == 1)
+                    thisdir->pup->quic_zero_rtt=1;
+            }    
+                    
+        }              
+                  
+        // Look for inflight 0-rtt
+        else if ( thisdir->QUIC_state == QUIC_OPEN_SENT &&
+                  hdr.header_form == 1 && hdr.packet_type == 1 &&
+                  hdr.dcid_len > 0     && hdr.fixed_bit == 1   &&
+                  hdr.dcid_len <= 20   && hdr.scid_len <= 20  )
+            thisdir->pup->quic_zero_rtt=1;
         
-        // Look for "Initial" packets with SCID and no DCID. This is from the server.
-        // We also must have observed at least one Initial from the client.
-        else if ( otherdir->QUIC_state == QUIC_OPEN_SENT &&
-                  hdr.header_form == 1 && hdr.packet_type == 0 && 
-                  hdr.scid_len > 0     && hdr.fixed_bit == 1   &&
-                  hdr.dcid_len <= 20   && hdr.scid_len <= 20  ){
-                  
-            memcpy(thisdir->pup->quic_s_vers,hdr.version,4); // Save the version
-            memcpy(thisdir->QUIC_conn_id,hdr.scid,hdr.scid_len);// Save the connection ID
-#ifdef HAVE_OPENSSL // Search also in "response" to handle out of order
-            search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr.dcid_len );
-#endif          
-            // If the version is the same, we have QUIC
-            if ( memcmp(thisdir->pup->quic_c_vers, thisdir->pup->quic_s_vers, 4) == 0 ){
-            
-                thisdir->QUIC_state = otherdir->QUIC_state = QUIC_DATA_SENT; // Mark the flow forever
-                thisdir->is_QUIC = otherdir->is_QUIC = 1; 
-            }                
-                  
-        }
 
        break;
      default:

@@ -1165,6 +1165,7 @@ struct sudp_pair
   char *quic_ua_string;
   char quic_c_vers [4];
   char quic_s_vers [4];
+  uint8_t quic_zero_rtt;
   Bool quic_chlo;
   Bool quic_rej;
 
