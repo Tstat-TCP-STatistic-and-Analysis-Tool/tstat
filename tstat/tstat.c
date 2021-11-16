@@ -2422,7 +2422,7 @@ static int ProcessPacket(struct timeval *pckt_time,
     static int stat_err_counter = 3;
 
     current_time = *pckt_time;
-    
+
     //------------------ skip very close pkts 
     //  if (elapsed (last_packet, current_time) <= 0)
     //    continue;
@@ -2516,8 +2516,8 @@ static int ProcessPacket(struct timeval *pckt_time,
 	} 
      }
 
-    if (flow_stat_code != FLOW_STAT_OK)
-      return 0;
+    //if (flow_stat_code != FLOW_STAT_OK)
+    //  return 0;
 
     //********************************************/
     //* check if the runtime config file is changed */
