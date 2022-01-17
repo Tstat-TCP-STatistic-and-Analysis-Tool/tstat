@@ -1003,7 +1003,7 @@ quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
     quic_hdr hdr;
     memset(&hdr, 0, sizeof(hdr));
 
-    if (data_len<5)
+    if (data_len<=5)
       return hdr;
 
     hdr.header_form = (base[0] & ( 1 << 7 )) >> 7;
@@ -1016,12 +1016,12 @@ quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
         memcpy(hdr.version, base + 1, 4);
 
         hdr.dcid_len = base[5];
-        if (hdr.dcid_len > 20 || 5 + 1 + hdr.dcid_len > data_len)
+        if (hdr.dcid_len > 20 || 5 + 1 + hdr.dcid_len >= data_len)
           return hdr;
         memcpy(hdr.dcid, base + 5 + 1, hdr.dcid_len);
 
         hdr.scid_len = base[5 + 1 + hdr.dcid_len];
-        if (hdr.scid_len > 20 || 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len > data_len)
+        if (hdr.scid_len > 20 || 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len >= data_len)
           return hdr;
         memcpy(hdr.scid, base + 5 + 1 + hdr.dcid_len + 1, hdr.scid_len);
         
@@ -1029,13 +1029,13 @@ quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
         if (hdr.packet_type == 0){
             unsigned char * ptr = base + 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len;
             uint8_t token_len_len = 0;
-            if (ptr + 4 > base + data_len || ptr < base)
+            if (ptr + 4 >= base + data_len || ptr < base)
               return hdr;
             uint64_t token_len = read_var_len_int(ptr, &token_len_len);
             hdr.token_len = token_len_len + token_len; // Include both len and token
             uint8_t pkt_len_len = 0;
             ptr += token_len_len + token_len;
-            if (ptr + 4 > base + data_len || ptr < base)
+            if (ptr + 4 >= base + data_len || ptr < base)
               return hdr;
             hdr.pkt_len = read_var_len_int(ptr, &pkt_len_len);
         }
