@@ -707,8 +707,6 @@ typedef struct {
 } quic_hdr;
 
 
-#ifdef HAVE_OPENSSL
-
 /* Read Variable Length Integers
    As Defined in: https://datatracker.ietf.org/doc/html/rfc9000#section-16
    Input: start
@@ -738,6 +736,9 @@ uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
     return result;
 
 }
+
+#ifdef HAVE_OPENSSL
+
 
 void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payload_offset, quic_hdr hdr  ){
 
@@ -996,6 +997,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
 
     return;                     
 }
+
 #endif
 
 quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
