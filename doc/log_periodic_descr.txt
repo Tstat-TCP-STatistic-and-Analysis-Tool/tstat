@@ -1,0 +1,39 @@
+Tstat optionally produces a "log_periodic_complete" which periodically dumps a subset of the fields of the "log_tcp_complete". For each TCP connection, the metrics reported in the below table are written in the log at the end of each time bin. Statistics are not incremental, thus they are computed on the packets belonging to the given bin. For a complete description of the fields and the definition of a TCP connection, please refer to the "log_tcp_complete" description.
+
+A new time bin begins when more than 1 second elapses from the beginning of the current time bin. When a new time bin begins, the current time bin ends, and the its statistics are dumped in the log. Notice that, as a consequence of the bin logic, the new time bin does not begin exactly 1 second after the beginning of the current bin, but it begins when Tstat observers the first packet for the TCP flow after that moment.
+This as two implications: i) bins do not start exactly after N seconds from the flow first packet, ii) bins are not created when no packet is received.
+
+
+############################################################################
+# C2S # S2C # Short description      # Unit  # Long description            #
+############################################################################
+#  1  #  3  # Client/Server IP addr  # -     # IP addresses of the client/server
+#  2  #  4  # Client/Server TCP port # -     # TCP port addresses for the client/server
+#  5        # time_abs_start         # ms    # Bin first packet absolute time (epoch)
+#  6        # time_rel_start         # ms    # Bin first packet since the first flow segment
+#  7        # time_rel_end           # ms    # Bin last packet since the first flow segment
+#  8        # bin_duration           # ms    # Bin duration
+#  9  # 21  # packets                # -     # total number of packets observed form the client/server
+# 10  # 22  # RST sent               # 0/1   # 0 = no RST segment has been sent by the client/server
+# 11  # 23  # ACK sent               # -     # number of segments with the ACK field set to 1
+# 12  # 24  # PURE ACK sent          # -     # number of segments with ACK field set to 1 and no data
+# 13  # 25  # unique bytes           # bytes # number of bytes sent in the payload
+# 14  # 26  # data pkts              # -     # number of segments with payload
+# 15  # 27  # data bytes             # bytes # number of bytes transmitted in the payload, including retransmissions
+# 16  # 28  # rexmit pkts            # -     # number of retransmitted segments (including SYNs and FINs)
+# 17  # 29  # rexmit bytes           # bytes # number of retransmitted bytes
+# 18  # 30  # out seq pkts           # -     # number of segments observed out of sequence
+# 19  # 31  # SYN count              # -     # number of SYN segments observed (including rtx)
+# 20  # 32  # FIN count              # -     # number of FIN segments observed (including rtx)
+############################################################################
+# 33  # 35  # Average rtt            # ms    # Average RTT computed measuring the time elapsed between the data segment and the corresponding ACK
+# 34  # 36  # rtt count              # -     # Number of valid RTT observation
+# 37  # 39  # cwin min               # bytes # Minimum in-flight-size
+# 38  # 40  # cwin max               # bytes # Maximum in-flight-size computed as the difference between the largest sequence number so far, and the corresponding last ACK message on the reverse path. It is an estimate of the congestion window
+# 41  # 42  # SACK sent              # -     # number of SACK messages sent
+############################################################################
+# 43        # C Internal             # 0/1   # 1 = client has internal IP, 0 = client has external IP
+# 44        # S Internal             # 0/1   # 1 = server has internal IP, 0 = server has external IP
+# 45        # C anonymized           # 0/1   # 1 = client IP is CryptoPAn anonymized
+# 46        # S anonymized           # 0/1   # 1 = server IP is CryptoPAn anonymized
+############################################################################
