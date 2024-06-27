@@ -1661,6 +1661,12 @@ void write_log_header(FILE *fp, int log_type)
        wfprintf(fp, " c_sack_cnt:%d", col++);
        wfprintf(fp, " s_sack_cnt:%d", col++);
 
+       // Internal and Crypto
+       wfprintf(fp," c_isint:%d", col++);
+       wfprintf(fp," s_isint:%d", col++);
+       wfprintf(fp," c_iscrypto:%d", col++);
+       wfprintf(fp," s_iscrypto:%d", col++);
+
        wfprintf (fp, "\n");
    }
 

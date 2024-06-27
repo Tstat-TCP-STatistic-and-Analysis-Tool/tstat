@@ -2352,9 +2352,9 @@ void print_tcp_stats_core(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
   /* printing boolean flag if destination is considered internal or not */
   wfprintf (fp, " %d", ptp_save->internal_dst);
 
-  /* printing boolean flag if source is considered internal or not */
+  /* printing boolean flag if source is anonymized or not */
   wfprintf (fp, " %d", ptp_save->crypto_src);
-  /* printing boolean flag if destination is considered internal or not */
+  /* printing boolean flag if destination is anonymized or not */
   wfprintf (fp, " %d", ptp_save->crypto_dst);
 
   /* TOPIX: added 97th column: connection type */
@@ -4215,6 +4215,16 @@ void print_periodic_log(tcp_pair * ptp_save) {
               " %u %u",
               ptp_save->c2s.sacks_sent - ptp_save->last_print_c2s.sacks_sent,
               ptp_save->s2c.sacks_sent - ptp_save->last_print_s2c.sacks_sent);
+
+    /* printing boolean flag if source is considered internal or not */
+    wfprintf (fp_periodic_logc, " %d", ptp_save->internal_src);
+    /* printing boolean flag if destination is considered internal or not */
+    wfprintf (fp_periodic_logc, " %d", ptp_save->internal_dst);
+
+    /* printing boolean flag if source is anonymized or not */
+    wfprintf (fp_periodic_logc, " %d", ptp_save->crypto_src);
+    /* printing boolean flag if destination is anonymized or not */
+    wfprintf (fp_periodic_logc, " %d", ptp_save->crypto_dst);
 
     /* new line */
     wfprintf (fp_periodic_logc, "\n");
