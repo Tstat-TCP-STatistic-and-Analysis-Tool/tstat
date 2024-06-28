@@ -9,10 +9,12 @@ This as two implications: i) bins do not start exactly after N seconds from the 
 ############################################################################
 #  1  #  3  # Client/Server IP addr  # -     # IP addresses of the client/server
 #  2  #  4  # Client/Server TCP port # -     # TCP port addresses for the client/server
+############################################################################
 #  5        # time_abs_start         # ms    # Bin first packet absolute time (epoch)
 #  6        # time_rel_start         # ms    # Bin first packet since the first flow segment
 #  7        # time_rel_end           # ms    # Bin last packet since the first flow segment
 #  8        # bin_duration           # ms    # Bin duration
+############################################################################
 #  9  # 21  # packets                # -     # total number of packets observed form the client/server
 # 10  # 22  # RST sent               # 0/1   # 0 = no RST segment has been sent by the client/server
 # 11  # 23  # ACK sent               # -     # number of segments with the ACK field set to 1
