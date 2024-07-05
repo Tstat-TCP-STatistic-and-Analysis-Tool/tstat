@@ -1,3 +1,10 @@
+14/06/24 - MMM
+- Main changes in 3.3
+  * Added QUIC classification
+  * Improved RTP/RTCP and other related RTC protocols classification
+  * TLS 1.3 support
+  * Added DNS information logs in log_dns_complete
+  * Introduced log_periodic
 25/05/16 - MMM
 - Main changes since 3.1
   * Fixed TTL and IP Payload Length stats for IPv6

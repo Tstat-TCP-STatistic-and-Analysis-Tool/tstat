@@ -116,7 +116,7 @@ extern struct bayes_settings *bayes_settings_pktsize;
 #define min(x,y) (((x)<(y))?(x):(y))
 #define max(x,y) (((x)>(y))?(x):(y))
 
-#if !(TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR)
+#if !(TARGET_OS_MAC || TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR)
 #define my_finite(x) finite(x)
 #else
 #define my_finite(x) isfinite(x)
