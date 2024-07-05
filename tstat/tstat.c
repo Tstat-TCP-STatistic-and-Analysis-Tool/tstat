@@ -342,7 +342,7 @@ Bool crypto_conf = FALSE;
 Bool white_conf = FALSE;
 Bool eth_conf = FALSE;
 
-int  crypto_source = CPKEY_RANDOM;
+int  crypto_source = CPKEY_UNDEF;
 char *crypto_value = NULL;
 int  key_modes_set = 0;
 Bool enc_string_set = FALSE;
@@ -3671,8 +3671,13 @@ ParseArgs (int *pargc, char *argv[])
 	      exit (1);
 	    }
 	  crypto_conf = TRUE;
-	  crypto_source = CPKEY_RANDOM;
-	  crypto_value = NULL;
+	  if (crypto_source==CPKEY_UNDEF) 
+	    { // If no key option ()--keyfile --keyvalue --keybase64)
+	      // has already been parsed, set the key to random, 
+	      // otherwise maintain the values set by the option
+	     crypto_source = CPKEY_RANDOM;
+	     crypto_value = NULL;
+	    }
 	  break;
 	case 'W':
 	  /* -W file */

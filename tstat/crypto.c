@@ -333,6 +333,7 @@ void initialize_crypto(int key_source, char *value, char *basenamedir)
        }
       
       break;
+    case CPKEY_UNDEF:
     default:
       fprintf(fp_stderr,"Invalid key source\n");
       exit(1);

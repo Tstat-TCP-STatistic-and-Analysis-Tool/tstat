@@ -19,6 +19,7 @@ void      store_crypto_ipv6(struct in6_addr *);
 struct in6_addr *retrieve_crypto_ipv6(struct in6_addr *);
 #endif
 
+#define CPKEY_UNDEF  0
 #define CPKEY_RANDOM 1
 #define CPKEY_FILE   2
 #define CPKEY_FILE64 3
