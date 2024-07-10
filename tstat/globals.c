@@ -72,8 +72,10 @@ void InitGlobals (void)
 
   GLOBALS.Rate_Sampling         = RATE_SAMPLING;
 
-  GLOBALS.Max_Crypto_Cache_Size = MAX_CRYPTO_CACHE_SIZE;
-
+#ifdef LOG_PERIODIC  
+  GLOBALS.Log_Periodic_Interval = LOG_PERIODIC_INTERVAL;
+#endif
+  
   GLOBALS.DNS_Cache_Size        = DNS_CACHE_SIZE;
 #ifdef SUPPORT_IPV6
   GLOBALS.DNS_Cache_Size_IPv6   = DNS_CACHE_SIZE_IPV6;
@@ -134,6 +136,10 @@ void PrintGlobals (void)
   fprintf (fp_stdout,"\tMax_Time_Step = %f\n",GLOBALS.Max_Time_Step/1000000.0);
   fprintf (fp_stdout,"\tDirs = %d\n",GLOBALS.Dirs);
   fprintf (fp_stdout,"\tRate_Sampling = %f\n",GLOBALS.Rate_Sampling*1.0/1000000.0);
+  
+#ifdef LOG_PERIODIC  
+  fprintf (fp_stdout,"\tLog_Periodic_Interval = %f\n",GLOBALS.Log_Periodic_Interval*1.0/1000000.0);
+#endif
   
   fprintf (fp_stdout,"\tMax_Seg_Per_Quad = %d\n",GLOBALS.Max_Seg_Per_Quad);
   fprintf (fp_stdout,"\tList_Search_Dept = %d\n",GLOBALS.List_Search_Dept);
@@ -585,6 +591,21 @@ void globals_parse_ini_arg(char *param_name, param_value param_value)
        else
 	 croak_global_double(param_name);
      }
+#ifdef LOG_PERIODIC     
+    else if (strcasecmp(param_name,"log_periodic_interval") == 0) 
+     {
+       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
+        {
+	  GLOBALS.Log_Periodic_Interval = param_value.value.ivalue * 1000000;
+        }
+       else if (param_value.type == DOUBLE && param_value.value.dvalue > 0.0) 
+        {
+	  GLOBALS.Log_Periodic_Interval = (int) (param_value.value.dvalue * 1000000.0);
+        }
+       else
+	 croak_global_double(param_name);
+     }
+#endif     
     else if (strcasecmp(param_name,"max_crypto_cache_size") == 0) 
      {
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 

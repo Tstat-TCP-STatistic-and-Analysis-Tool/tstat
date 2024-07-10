@@ -54,8 +54,6 @@ extern Bool strict_privacy;
 extern Bool dns_enabled;
 #endif
 
-#define LOG_PERIODIC_INTERVAL_MS 1000.0
-
 Bool thread_stats_flag = FALSE;	/* parameter used to make not possible that two
 				   istances of the same thread can run at the same time */
 
@@ -833,7 +831,7 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
 
   /*MT: log periodic - Do this before updating counters*/
 #ifdef LOG_PERIODIC
-    if ( elapsed(ptp_save->last_print_time, current_time)/1000.0 > LOG_PERIODIC_INTERVAL_MS) {
+    if ( elapsed(ptp_save->last_print_time, current_time) > GLOBALS.Log_Periodic_Interval) {
 
       print_periodic_log(ptp_save);
 

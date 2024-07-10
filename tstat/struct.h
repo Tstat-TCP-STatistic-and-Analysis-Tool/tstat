@@ -1172,6 +1172,13 @@ struct sudp_pair
   /* Has STUN, for dump */
   Bool is_stun_initiated;
 
+  #ifdef LOG_PERIODIC
+  /* log periodic*/
+  timeval last_print_time;
+  ucb last_print_c2s;
+  ucb last_print_s2c;
+  #endif //LOG_PERIODIC
+  
 };
 typedef struct sudp_pair udp_pair;
 typedef struct udphdr udphdr;
@@ -1328,6 +1335,10 @@ struct global_parameters {
  double Entropy_Threshold;
  
  int Rate_Sampling;
+ 
+#ifdef LOG_PERIODIC
+ int Log_Periodic_Interval;
+#endif 
 
  int Max_Crypto_Cache_Size;
 

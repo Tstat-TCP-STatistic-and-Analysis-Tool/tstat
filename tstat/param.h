@@ -179,6 +179,8 @@ Increase this number on high speed network will help ...*/
 
 #define RATE_SAMPLING 1000000   /* 1 sec */
 
+#define LOG_PERIODIC_INTERVAL 1000000 /* Log_Periodic sampling rate (both TCP and UDP)  1 sec */
+
 #define MAX_CRYPTO_CACHE_SIZE 130000  /* Enough to maintain an entry in the
                                          LRU cache for a few hours */
 /* Size of the DNS cache */

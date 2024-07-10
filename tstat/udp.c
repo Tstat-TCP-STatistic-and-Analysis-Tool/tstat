@@ -64,12 +64,14 @@ udp_pair **utp = NULL;		/* array of pointers to allocated pairs */
 /* local routine definitions */
 static udp_pair *NewUTP (struct ip *, struct udphdr *);
 static udp_pair *FindUTP (struct ip *, struct udphdr *, int *);
+void print_udp_periodic_log(udp_pair *);
 
 char *url_encode(char *str);
 
 extern unsigned long int fcount;
 extern Bool warn_MAX_;
 extern unsigned long int f_UDP_count;
+extern FILE *fp_periodic_udp_logc;
 
 #ifdef CHECK_UDP_DUP
 Bool
@@ -269,6 +271,11 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
   memset(pup->quic_s_vers, 0, 4);
   pup->quic_zero_rtt = 0;
   pup->is_stun_initiated = 0;
+
+#ifdef LOG_PERIODIC
+  // LOG_PERIODIC
+  pup->last_print_time = current_time;
+#endif //LOG_PERIODIC
   
   
   return (utp[num_udp_pairs]);
@@ -1375,6 +1382,14 @@ udp_flow_stat (struct ip * pip, struct udphdr * pudp, void *plast)
 
   ++packet_count;
 
+  /*MT/MMM: log periodic - Do this before updating counters*/
+#ifdef LOG_PERIODIC
+  if ( elapsed(pup_save->last_print_time, current_time) > GLOBALS.Log_Periodic_Interval) 
+    {
+      print_udp_periodic_log(pup_save);
+   }
+#endif // LOG_PERIODIC
+   
   if (pup_save == NULL)
     {
       return (FLOW_STAT_NULL);
@@ -1699,7 +1714,11 @@ make_udp_conn_stats (udp_pair * pup_save, Bool complete)
 #endif
 	}
     }
-
+    
+#ifdef LOG_PERIODIC
+  print_udp_periodic_log(pup_save);
+#endif //LOG_PERIODIC
+  
   /* Statistics using plugins */
 
   make_proto_stat (pup_save, PROTOCOL_UDP);
@@ -1848,6 +1867,124 @@ char *url_decode(char *str)
   return buf;
 }
 
+#ifdef LOG_PERIODIC
+void print_udp_periodic_log(udp_pair * pup_save) {
+  ucb *thisUdir,*thisC2S,*thisS2C;
+  udp_pair *pup;
+  
+  thisC2S = &(pup_save->c2s);
+  thisS2C = &(pup_save->s2c);
+
+  if (!fp_periodic_udp_logc)
+    return;
+
+  thisUdir = thisC2S;
+  pup = thisUdir->pup;
+
+  //     #   Field Meaning
+  //    --------------------------------------
+  //     1   Source Address
+  //     2   Source Port
+
+  if (pup->crypto_src==FALSE)
+     wfprintf (fp_periodic_udp_logc, "%s %s",
+	       HostName (pup->addr_pair.a_address),
+	       ServiceName (pup->addr_pair.a_port));
+  else 
+     wfprintf (fp_periodic_udp_logc, "%s %s",
+	       HostNameEncrypted (pup->addr_pair.a_address),
+	       ServiceName (pup->addr_pair.a_port));
+	       
+/*
+  //     3   Flow Start Time
+  //     4   Flow Elapsed Time [s]
+  //     5   Flow Size [Bytes]
+  wfprintf (fp_periodic_udp_logc,
+	   " %f %.6f %llu",
+	   time2double ((thisUdir->first_pkt_time))/1000., 
+//         elapsed (first_packet,thisUdir->first_pkt_time)/1000,
+	   elapsed (thisUdir->first_pkt_time, thisUdir->last_pkt_time) /
+	   1000.0 / 1000.0, thisUdir->data_bytes);
+
+  //     6   No. of Total flow packets
+  wfprintf (fp_periodic_udp_logc, " %lld", thisUdir->packets);
+*/
+  // 7 internal address
+  // 8 udp_type
+
+  wfprintf (fp_periodic_udp_logc, " %d %d",
+	   pup_save->internal_src, pup_save->crypto_src);
+
+  thisUdir = thisS2C;
+  pup = thisUdir->pup;
+
+  //     #   Field Meaning
+  //    --------------------------------------
+  //     9   Source Address
+  //     10   Source Port
+
+  if (pup->crypto_dst==FALSE)
+     wfprintf (fp_periodic_udp_logc, " %s %s",
+	       HostName (pup->addr_pair.b_address),
+	       ServiceName (pup->addr_pair.b_port));
+  else
+     wfprintf (fp_periodic_udp_logc, " %s %s",
+	       HostNameEncrypted (pup->addr_pair.b_address),
+	       ServiceName (pup->addr_pair.b_port));
+/*
+  //     11   Flow Start Time
+  //     12   Flow Elapsed Time [s]
+  //     13   Flow Size [Bytes]
+  wfprintf (fp_periodic_udp_logc,
+	   " %f %.6f %llu",
+	   time2double ((thisUdir->first_pkt_time))/1000., 
+//         elapsed (first_packet,thisUdir->first_pkt_time)/1000,
+	   elapsed (thisUdir->first_pkt_time, thisUdir->last_pkt_time) /
+	   1000.0 / 1000.0, thisUdir->data_bytes);
+
+  //     14   No. of Total flow packets
+  wfprintf (fp_periodic_udp_logc, " %lld", thisUdir->packets);
+*/
+  // 15 internal address
+  // 16 udp_type
+
+  wfprintf (fp_periodic_udp_logc, " %d %d",
+	   pup_save->internal_dst, pup_save->crypto_dst);
+
+    /* TIME */
+
+    wfprintf (fp_periodic_udp_logc, " %f %f %f %f",
+              time2double(pup_save->last_print_time)/1000.0,
+              elapsed(pup_save->first_time, pup_save->last_print_time)/1000.0,
+              elapsed(pup_save->first_time, pup_save->last_time)/1000.0,
+              elapsed(pup_save->last_print_time, pup_save->last_time)/1000.0
+             );
+
+    /* Packets and bytes*/
+
+    wfprintf (fp_periodic_udp_logc,
+              " %lu %lu",
+              pup_save->c2s.packets - pup_save->last_print_c2s.packets,
+              pup_save->c2s.data_bytes - pup_save->last_print_c2s.data_bytes);
+
+    wfprintf (fp_periodic_udp_logc,
+              " %lu %lu",
+              pup_save->s2c.packets - pup_save->last_print_s2c.packets,
+              pup_save->s2c.data_bytes - pup_save->last_print_s2c.data_bytes);
+  
+  
+  wfprintf (fp_periodic_udp_logc, "\n");
+
+  /*update counters*/
+  pup_save->last_print_time = current_time; //ptp_save->last_time;
+  pup_save->last_print_c2s = pup_save->c2s;
+  pup_save->last_print_s2c = pup_save->s2c;
+  
+  return;
+ 
+}
+
+#endif //LOG_PERIODIC
 
 
 

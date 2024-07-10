@@ -1,8 +1,16 @@
-Tstat optionally produces a "log_periodic_complete" which periodically dumps a subset of the fields of the "log_tcp_complete". For each TCP connection, the metrics reported in the below table are written in the log at the end of each time bin. Statistics are not incremental, thus they are computed on the packets belonging to the given bin. For a complete description of the fields and the definition of a TCP connection, please refer to the "log_tcp_complete" description.
+Tstat optionally produces subsets of the fields of the "log_tcp_complete" and "log_udp_complete"  in "log_periodic_complete" and "log_periodic_udp_complete" files, respectively.
+For each TCP connection and for each UDP flow pair, the metrics reported in the below tables are written in the respective log at the end of each time bin. 
+Statistics are not incremental, thus they are computed on the packets belonging to the given bin. For a complete description of the fields, the definition of a TCP connection, and the definition of a UDP flow pair,
+please refer to the "log_tcp_complete" and "log_udp_complete" description.
 
 A new time bin begins when more than 1 second elapses from the beginning of the current time bin. When a new time bin begins, the current time bin ends, and the its statistics are dumped in the log. Notice that, as a consequence of the bin logic, the new time bin does not begin exactly 1 second after the beginning of the current bin, but it begins when Tstat observers the first packet for the TCP flow after that moment.
-This as two implications: i) bins do not start exactly after N seconds from the flow first packet, ii) bins are not created when no packet is received.
+This as two implications: i) bins do not start exactly after N seconds from the flow first packet, ii) bins are not created when no packet is received. 
+While 1 second is the default value for the duration of the time bins, the actual value is controlled by the global constant C<Log_Periodic_Interval> provided via the -G command line option.
 
+LOG_PERIODIC_COMPLETE
+---------------------
+
+This is the format for the "log_periodic_complete" file with the sampling of the TCP connections.
 
 ############################################################################
 # C2S # S2C # Short description      # Unit  # Long description            #
@@ -39,3 +47,27 @@ This as two implications: i) bins do not start exactly after N seconds from the 
 # 45        # C anonymized           # 0/1   # 1 = client IP is CryptoPAn anonymized
 # 46        # S anonymized           # 0/1   # 1 = server IP is CryptoPAn anonymized
 ############################################################################
+
+
+LOG_PERIODIC_UDP_COMPLETE
+-------------------------
+
+This is the format of the "log_periodic_udp_complete" file with the sampling of the UDP flow pairs.
+
+############################################################################
+# C2S # S2C # Short description      # Unit  # Long description            #
+############################################################################
+#  1  # 5   # Client/Server IP addr  # -     # IP addresses of client/server
+#  2  # 6   # Client/Server UDP port # -     # UDP port addresses of client/server
+#  3  # 7   # Internal               # 0/1   # 1 = IP address is internal
+#  4  # 8   # Anonymized             # 0/1   # 1 = IP address is CryptoPAN anonymized
+############################################################################
+#  9        # time_abs_start         # ms    # Bin first packet absolute time (epoch)
+#  10       # time_rel_start         # ms    # Bin first packet since the first flow segment
+#  11       # time_rel_end           # ms    # Bin last packet since the first flow segment
+#  12       # bin_duration           # ms    # Bin duration
+############################################################################
+#  13 # 15  # Packets                # -     # Total number of packets observed (in the time bin) from the client/server
+#  14 # 16  # Data bytes             # bytes # Number of bytes transmitted in the payload (in the time bin)
+############################################################################
+

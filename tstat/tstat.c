@@ -317,6 +317,7 @@ FILE *fp_video_logc = NULL;
 
 #ifdef LOG_PERIODIC
 FILE *fp_periodic_logc = NULL;
+FILE *fp_periodic_udp_logc = NULL;
 #endif
 
 FILE *fp_http_logc = NULL;
@@ -1670,6 +1671,39 @@ void write_log_header(FILE *fp, int log_type)
        wfprintf (fp, "\n");
    }
 
+    /**************************************************
+     * LOG_PERIODIC_UDP
+     **************************************************/
+ else if (log_type == LOG_PERIODIC_UDP_COMPLETE) 
+   {
+     col = 1;
+     wfprintf(fp, "#c_ip:%d", col++);		 // client ip
+     wfprintf(fp, " c_port:%d", col++); 	 // client port
+     wfprintf(fp, " c_isint:%d", col++);	 // client ip is internal
+     wfprintf(fp, " c_iscrypto:%d", col++);	 // client ip is internal
+
+     
+     wfprintf(fp, " s_ip:%d", col++);		 // server ip
+     wfprintf(fp, " s_port:%d", col++); 	 // server port
+     wfprintf(fp, " s_isint:%d", col++);	 // server ip is internal
+     wfprintf(fp, " s_iscrypto:%d", col++);	 // server ip is internal
+
+        /********************************
+         * timestamps 
+         ********************************/
+       wfprintf(fp, " time_abs_start:%d", col++);	// 90: first packet absolute
+       wfprintf(fp, " time_rel_start:%d", col++);	// 90: first packet absolute
+       wfprintf(fp, " time_rel_end:%d", col++); 	// 91: last packet absolute
+       wfprintf(fp, " bin_duration:%d", col++); 	// 91: last packet absolute
+
+     wfprintf(fp, " c_pkts_all:%d", col++);	  // 3: total number of segments uploaded
+     wfprintf(fp, " c_bytes_all:%d", col++);    // 9: total number of bytes = unique 
+     wfprintf(fp, " s_pkts_all:%d", col++);	  // 47: total number of segments uploaded
+     wfprintf(fp, " s_bytes_all:%d", col++);    // 53: total number of bytes = unique + retransmitted
+
+     wfprintf (fp, "\n");
+   }
+   
 }
 
 char * old_filename;
@@ -1811,6 +1845,11 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
   if (LOG_IS_ENABLED(LOG_PERIODIC_COMPLETE)) {
       reopen_logfile(&fp_periodic_logc,basename,"log_periodic_complete");
       write_log_header(fp_periodic_logc, LOG_PERIODIC_COMPLETE);
+  }
+
+  if (LOG_IS_ENABLED(LOG_PERIODIC_UDP_COMPLETE)) {
+      reopen_logfile(&fp_periodic_udp_logc,basename,"log_periodic_udp_complete");
+      write_log_header(fp_periodic_udp_logc, LOG_PERIODIC_UDP_COMPLETE);
   }
 #endif
 
@@ -4711,6 +4750,9 @@ void log_parse_ini_arg(char *param_name, param_value enabled) {
 #ifdef LOG_PERIODIC
     else if (strcmp(param_name, "log_periodic_complete") == 0) {
         log_parse_ini_arg_log_bitmask(fp_periodic_logc, LOG_PERIODIC_COMPLETE, "log_periodic_complete", enabled.value.ivalue);
+    }
+    else if (strcmp(param_name, "log_periodic_udp_complete") == 0) {
+        log_parse_ini_arg_log_bitmask(fp_periodic_udp_logc, LOG_PERIODIC_UDP_COMPLETE, "log_periodic_udp_complete", enabled.value.ivalue);
     }
 #endif
 

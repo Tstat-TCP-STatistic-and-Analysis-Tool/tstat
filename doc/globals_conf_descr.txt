@@ -44,6 +44,7 @@ C<tstat-conf/globals.conf>. We report here a simplified list of the available pa
     max_time_step = 300.0	# Interval for histogram/RRD collection [seconds]
     dirs = 12			# Number of Max_Time_Step intervals for each log directory
     rate_sampling = 1.0		# Interval for TCP flow rate measures [seconds]
+    log_periodic_interval = 1.0 # Sampling rate for log_periodic (both TCP and UDP) [seconds]
 
     # Very specific, change at your risk
     max_seg_per_quad = 100	# Max number of segments in flow recostructions
