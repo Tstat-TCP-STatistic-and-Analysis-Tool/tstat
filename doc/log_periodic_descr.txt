@@ -1,16 +1,25 @@
-Tstat optionally produces subsets of the fields of the "log_tcp_complete" and "log_udp_complete"  in "log_periodic_complete" and "log_periodic_udp_complete" files, respectively.
-For each TCP connection and for each UDP flow pair, the metrics reported in the below tables are written in the respective log at the end of each time bin. 
-Statistics are not incremental, thus they are computed on the packets belonging to the given bin. For a complete description of the fields, the definition of a TCP connection, and the definition of a UDP flow pair,
-please refer to the "log_tcp_complete" and "log_udp_complete" description.
+Tstat optionally produces subsets of the fields of the "log_tcp_complete" and "log_udp_complete"  
+in "log_tcp_periodic" and "log_udp_periodic" files, respectively.
+For each TCP connection and for each UDP flow pair, the metrics reported in the below tables are 
+written in the respective log at the end of each time bin. 
+Statistics are not incremental, thus they are computed on the packets belonging to the given bin. 
+For a complete description of the fields, the definition of a TCP connection, and the definition of a UDP 
+flow pair, please refer to the "log_tcp_complete" and "log_udp_complete" description.
 
-A new time bin begins when more than 1 second elapses from the beginning of the current time bin. When a new time bin begins, the current time bin ends, and the its statistics are dumped in the log. Notice that, as a consequence of the bin logic, the new time bin does not begin exactly 1 second after the beginning of the current bin, but it begins when Tstat observers the first packet for the TCP flow after that moment.
-This as two implications: i) bins do not start exactly after N seconds from the flow first packet, ii) bins are not created when no packet is received. 
-While 1 second is the default value for the duration of the time bins, the actual value is controlled by the global constant C<Log_Periodic_Interval> provided via the -G command line option.
+A new time bin begins when more than 1 second elapses from the beginning of the current time bin. 
+When a new time bin begins, the current time bin ends, and the statistics are dumped in the log. 
+Notice that, as a consequence of the bin logic and the asynchronous Tstat behaviour, the new time bin 
+does not begin exactly 1 second after the beginning of the current bin, but it begins when Tstat 
+observers the first packet for the TCP connection (or UDP flow pair) after that moment.
+This as two implications: i) bins do not start exactly after N seconds from the flow first packet, 
+ii) bins are not created when no packet is received. 
+While 1 second is the default value for the duration of the time bins, the actual value is controlled 
+by the global constant C<Log_Periodic_Interval> provided via the -G command line option.
 
-LOG_PERIODIC_COMPLETE
+LOG_TCP_PERIODIC
 ---------------------
 
-This is the format for the "log_periodic_complete" file with the sampling of the TCP connections.
+This is the format for the "log_tcp_periodic" file with the sampling of the TCP connections.
 
 ############################################################################
 # C2S # S2C # Short description      # Unit  # Long description            #
@@ -49,10 +58,10 @@ This is the format for the "log_periodic_complete" file with the sampling of the
 ############################################################################
 
 
-LOG_PERIODIC_UDP_COMPLETE
+LOG_UDP_PERIODIC
 -------------------------
 
-This is the format of the "log_periodic_udp_complete" file with the sampling of the UDP flow pairs.
+This is the format of the "log_udp_periodic" file with the sampling of the UDP flow pairs.
 
 ############################################################################
 # C2S # S2C # Short description      # Unit  # Long description            #
