@@ -543,6 +543,10 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   ptp->ssl_server_PSK = FALSE;
   ptp->ssl_client_early_data = FALSE;
   ptp->ssl_server_hello_retry = FALSE;
+
+  ptp->ssl_client_hello_buffer = NULL;
+  ptp->ssl_client_hello_offset = 0;
+  ptp->ssl_client_hello_message_len = 0;
   
   #ifdef LOG_PERIODIC
   // LOG_PERIODIC

@@ -786,6 +786,10 @@ struct stcp_pair
   Bool ssl_client_early_data;  /* Client Hello contained early_data extension */
   Bool ssl_server_hello_retry; /* Server answered with HelloRetry message */
 
+  char *ssl_client_hello_buffer;
+  int  ssl_client_hello_offset;
+  int  ssl_client_hello_message_len;
+
   enum tls_category tls_service;
 
   /* DNS reverse lookup */

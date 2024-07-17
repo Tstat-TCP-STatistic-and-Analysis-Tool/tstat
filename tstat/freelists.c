@@ -169,6 +169,12 @@ tp_release (tcp_pair * released_tcp_pair)
      released_tcp_pair->ssl_server_tls_version=NULL;
    }
    
+  if (released_tcp_pair->ssl_client_hello_buffer!=NULL)
+   {
+     free(released_tcp_pair->ssl_client_hello_buffer);
+     released_tcp_pair->ssl_client_hello_buffer=NULL;
+   }
+
   if (released_tcp_pair->dns_name!=NULL)
    {
      free(released_tcp_pair->dns_name);

@@ -160,46 +160,37 @@ int ssl_parse_npnalpn_extension(char *base, int idx, int ii, int data_limit, int
     return res;
 }
 
-Bool ssl_client_check(tcp_pair *ptp, void *pdata, int payload_len, int data_length)
+Bool ssl_client_parse_tls(tcp_pair *ptp, void *pdata, int payload_len, int data_length)
 {
-  int record_length;
   char *base;
   int idx,all_ext_len,ext_type,ext_len,name_len,data_limit;
   int ii,j,next;
   int tls_message_version;
   
-  if (  *(char *)pdata == 0x16 &&  //fixed value
-      *(char *)(pdata + 1) == 0x03 && 
-    ( *(char *)(pdata + 2) >= 0x00 && *(char *)(pdata + 2) <= 0x03 ) && 
-    ( *(char *)(pdata + 3) >= 0x00 && *(char *)(pdata + 3) <= 0x39 ) && // SSL/TLS max record size is 16kB
-      *(char *)(pdata + 5) == 0x01 // Client Hello message type
-     )
-   { 
-     /* Match SSL 3 - TLS 1.x Handshake Client HELLO */
-      ptp->state = SSL_HANDSHAKE;
+  base = (char *)pdata;
 
-      base = (char *)pdata;
-
-      // Lenght of the Hello Message, including 5 bytes for the TLS header
-      int message_length = 5 + ntohs(*(tt_uint16 *)(base+3));
+  // Lenght of the Hello Message, including 5 bytes for the TLS header
+  int message_length = 5 + ntohs(*(tt_uint16 *)(base+3));
       
-      /* TLS version in the message */
-      tls_message_version = ntohs(*(tt_uint16 *)(base+9));
+  // printf("Data = %d Message = %d Payload = %d\n",data_length,message_length,payload_len);
 
-      sprintf(tls_version_list,"%04x",tls_message_version);
-      if (ptp->ssl_client_tls_version==NULL) 
-	 ptp->ssl_client_tls_version = strdup(tls_version_list);
+  /* TLS version in the message */
+  tls_message_version = ntohs(*(tt_uint16 *)(base+9));
 
-     // printf("C <- %s\n",ptp->ssl_client_tls_version);
+  sprintf(tls_version_list,"%04x",tls_message_version);
+  if (ptp->ssl_client_tls_version==NULL) 
+	   ptp->ssl_client_tls_version = strdup(tls_version_list);
+
+      // printf("C <- %s\n",ptp->ssl_client_tls_version);
      
       // All tests must be limited to the Hello Message, so
       // we define the minimum between the Message Lenght and the 
       // actual data available in the segment
       
-      data_limit = min(data_length,message_length);
+  data_limit = min(data_length,message_length);
       
       // Index of the SessionID lenght field
-      idx = 43;              
+  idx = 43;              
 
       // Add session length = 1st byte of cipher suite section
       if (idx > data_limit) 
@@ -375,7 +366,58 @@ Bool ssl_client_check(tcp_pair *ptp, void *pdata, int payload_len, int data_leng
            }
        }
 
+      return TRUE;  // the return value is never used
+   }
+
+Bool ssl_client_check(tcp_pair *ptp, void *pdata, int payload_len, int data_length)
+{
+  int record_length;
+  char *base;
+  
+  if (  *(char *)pdata == 0x16 &&  //fixed value
+      *(char *)(pdata + 1) == 0x03 && 
+    ( *(char *)(pdata + 2) >= 0x00 && *(char *)(pdata + 2) <= 0x03 ) && 
+    ( *(char *)(pdata + 3) >= 0x00 && *(char *)(pdata + 3) <= 0x39 ) && // SSL/TLS max record size is 16kB
+      *(char *)(pdata + 5) == 0x01 // Client Hello message type
+     )
+   { 
+     /* Match SSL 3 - TLS 1.x Handshake Client HELLO */
+      ptp->state = SSL_HANDSHAKE;
+
+      base = (char *)pdata;
+
+      // Lenght of the Hello Message, including 5 bytes for the TLS header
+      int message_length = 5 + ntohs(*(tt_uint16 *)(base+3));
+      
+      // printf("Data = %d Message = %d Payload = %d\n",data_length,message_length,payload_len);
+
+      if (message_length > data_length)
+        {
+          // Store the payload and postpone the parsing
+          if (ptp->ssl_client_hello_buffer==NULL)
+           {
+              ptp->ssl_client_hello_buffer = (char *)malloc(message_length*sizeof(char));
+              if (ptp->ssl_client_hello_buffer!=NULL)
+               memcpy(ptp->ssl_client_hello_buffer,pdata,data_length);
+               ptp->ssl_client_hello_offset=data_length;
+               ptp->ssl_client_hello_message_len = message_length;
+           }
+        }
+      else
+        {
+          // We might parse here only complete messages, postoponing the full parsing
+          // of fragmented ones to the moment we see the full message...
+          // ... but then if we do not see the rest of the message, we will never parse the first part 
+//          ssl_client_parse_tls(ptp,pdata,payload_len,data_length);
+        }
+      
+      // We opt for always parsing the fragmented message, so to already have most of the content
+      // We might also, later, condition the parsing of the full message on already knowing the SNI.
+      
+      ssl_client_parse_tls(ptp,pdata,payload_len,data_length);
+
       return TRUE;
+      
    }
   else if (  *(char *)(pdata + 2) == 0x01 &&
              *(char *)(pdata + 3) == 0x03 &&
@@ -392,7 +434,6 @@ Bool ssl_client_check(tcp_pair *ptp, void *pdata, int payload_len, int data_leng
    }
   return FALSE;
 }
-
 
 Bool ssl_server_check(tcp_pair *ptp, void *pdata, int payload_len, int data_length)
 {
@@ -1780,6 +1821,53 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	break;
 #endif     
      case SSL_HANDSHAKE:
+        if (dir == C2S && ((char *) pdata + 6 <= (char *) plast))
+         {
+           // We should be in this state if the Client Hello was fragmented, we have seen the first fragment
+           // and we still have to see the Server Hello, so the packet should be carrying the further Client Hello data
+           
+           if (ptp->ssl_client_hello_buffer!=NULL && ptp->ssl_client_hello_offset > 0 )
+            {
+              if ((ptp->ssl_client_hello_offset + data_length) == ptp->ssl_client_hello_message_len ) 
+               {
+                 // I have the full Client Hello message
+                 /*  printf("TLS data %d offset %d message %d offset+data %d %s\n",data_length, 
+                             ptp->ssl_client_hello_offset, 
+                             ptp->ssl_client_hello_message_len, 
+                             ptp->ssl_client_hello_offset+data_length,
+                             ptp->ssl_client_subject!=NULL?ptp->ssl_client_subject:"---");
+                */
+                  memcpy(ptp->ssl_client_hello_buffer+ptp->ssl_client_hello_offset,pdata,data_length);
+                  ptp->ssl_client_hello_offset += data_length;
+                  ssl_client_parse_tls(ptp,ptp->ssl_client_hello_buffer,ptp->ssl_client_hello_offset,ptp->ssl_client_hello_offset);
+               }
+              else if ((ptp->ssl_client_hello_offset + data_length) < ptp->ssl_client_hello_message_len ) 
+               {
+                 // Some fragment still missing 
+                 /* printf("TLS- data %d offset %d message %d offset+data %d %s\n",data_length, 
+                            ptp->ssl_client_hello_offset, 
+                            ptp->ssl_client_hello_message_len, 
+                            ptp->ssl_client_hello_offset+data_length,
+                            ptp->ssl_client_subject!=NULL?ptp->ssl_client_subject:"---");
+                 */
+                  memcpy(ptp->ssl_client_hello_buffer+ptp->ssl_client_hello_offset,pdata,data_length);
+                  ptp->ssl_client_hello_offset += data_length;
+                  ssl_client_parse_tls(ptp,ptp->ssl_client_hello_buffer,ptp->ssl_client_hello_offset,ptp->ssl_client_hello_offset);
+               }
+              else
+               {
+                 // More data than expected: ignore because probably the packets have been seen in the wrong sequence
+                  /* 
+                    printf("TLS++ data %d offset %d message %d offset+data %d %s\n",data_length, 
+                            ptp->ssl_client_hello_offset,
+                            ptp->ssl_client_hello_message_len, 
+                            ptp->ssl_client_hello_offset+data_length,
+                            ptp->ssl_client_subject!=NULL?ptp->ssl_client_subject:"---");
+                  */
+               }
+            } 
+               
+         }
         if (dir == S2C && ((char *) pdata + 6 <= (char *) plast) &&
 	    ssl_server_check(ptp, pdata, payload_len, data_length) )
 	  {
