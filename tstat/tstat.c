@@ -1595,7 +1595,7 @@ void write_log_header(FILE *fp, int log_type)
     /**************************************************
      * LOG_PERIODIC
      **************************************************/
-  else if (log_type == LOG_PERIODIC_COMPLETE) 
+  else if (log_type == LOG_TCP_PERIODIC) 
    {
      col = 1;
 
@@ -1674,7 +1674,7 @@ void write_log_header(FILE *fp, int log_type)
     /**************************************************
      * LOG_PERIODIC_UDP
      **************************************************/
- else if (log_type == LOG_PERIODIC_UDP_COMPLETE) 
+ else if (log_type == LOG_UDP_PERIODIC) 
    {
      col = 1;
      wfprintf(fp, "#c_ip:%d", col++);		 // client ip
@@ -1842,14 +1842,14 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
   }
 
 #ifdef LOG_PERIODIC
-  if (LOG_IS_ENABLED(LOG_PERIODIC_COMPLETE)) {
-      reopen_logfile(&fp_periodic_logc,basename,"log_periodic_complete");
-      write_log_header(fp_periodic_logc, LOG_PERIODIC_COMPLETE);
+  if (LOG_IS_ENABLED(LOG_TCP_PERIODIC)) {
+      reopen_logfile(&fp_periodic_logc,basename,"log_tcp_periodic");
+      write_log_header(fp_periodic_logc, LOG_TCP_PERIODIC);
   }
 
-  if (LOG_IS_ENABLED(LOG_PERIODIC_UDP_COMPLETE)) {
-      reopen_logfile(&fp_periodic_udp_logc,basename,"log_periodic_udp_complete");
-      write_log_header(fp_periodic_udp_logc, LOG_PERIODIC_UDP_COMPLETE);
+  if (LOG_IS_ENABLED(LOG_UDP_PERIODIC)) {
+      reopen_logfile(&fp_periodic_udp_logc,basename,"log_udp_periodic");
+      write_log_header(fp_periodic_udp_logc, LOG_UDP_PERIODIC);
   }
 #endif
 
@@ -4748,11 +4748,11 @@ void log_parse_ini_arg(char *param_name, param_value enabled) {
         log_parse_ini_arg_log_bitmask(fp_http_logc, LOG_HTTP_COMPLETE, "log_http_complete", enabled.value.ivalue);
     }
 #ifdef LOG_PERIODIC
-    else if (strcmp(param_name, "log_periodic_complete") == 0) {
-        log_parse_ini_arg_log_bitmask(fp_periodic_logc, LOG_PERIODIC_COMPLETE, "log_periodic_complete", enabled.value.ivalue);
+    else if (strcmp(param_name, "log_tcp_periodic") == 0) {
+        log_parse_ini_arg_log_bitmask(fp_periodic_logc, LOG_TCP_PERIODIC, "log_tcp_periodic", enabled.value.ivalue);
     }
-    else if (strcmp(param_name, "log_periodic_udp_complete") == 0) {
-        log_parse_ini_arg_log_bitmask(fp_periodic_udp_logc, LOG_PERIODIC_UDP_COMPLETE, "log_periodic_udp_complete", enabled.value.ivalue);
+    else if (strcmp(param_name, "log_udp_periodic") == 0) {
+        log_parse_ini_arg_log_bitmask(fp_periodic_udp_logc, LOG_UDP_PERIODIC, "log_udp_periodic", enabled.value.ivalue);
     }
 #endif
 
