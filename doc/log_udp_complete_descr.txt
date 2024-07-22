@@ -32,8 +32,9 @@ is included
 ############################################################################
 #  20       # QUIC SNI               # -     # SNI requested by QUIC connections [$]
 #  21       # QUIC User Agent        # -     # User Agent reported by QUIC connections [+][$]
-#  22       # QUIC CHLO              # 0/1   # CHLO message seen
-#  23       # QUIC REJ               # 0/1   # REJ message seen 
+#  22       # QUIC Client Version    # -     # QUIC version indicated by the client
+#  23       # QUIC Server Version    # -     # QUIC version indicated by the server 
+#  24       # QUIC Zero RTT          # 0/1   # QUIC Zero-RTT signaled
 
 [+] The QUIC User Agent is printed as a percent-encoded (URL-encoded) string
 (https://en.wikipedia.org/wiki/Percent-encoding).
