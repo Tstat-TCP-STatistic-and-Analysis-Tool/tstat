@@ -513,6 +513,12 @@ utp_release (udp_pair * rel_udp_pair)
      rel_udp_pair->quic_ua_string=NULL;
    }
    
+  if (rel_udp_pair->quic_client_hello!=NULL)
+   {
+     free(rel_udp_pair->quic_client_hello);
+     rel_udp_pair->quic_client_hello=NULL;
+   }
+   
   while (rel_udp_pair->c2s.flow_ptr.rtp_ptr!=NULL)
    {
      rtp *this = rel_udp_pair->c2s.flow_ptr.rtp_ptr;

@@ -35,6 +35,8 @@ extern Bool dns_enabled;
 #define get_u8(X,O)   (*(tt_uint8  *)(X + O))
 #define get_u16(X,O)  (*(tt_uint16 *)(X + O))
 #define get_u32(X,O)  (*(tt_uint32 *)(X + O))
+#define QUIC_MAX_ACCUL 9000
+#define QUIC_MAX_PKT 1500
 
 #if __BIG_ENDIAN__
 #define htonll(x) (x)
@@ -270,6 +272,8 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
   memset(pup->quic_c_vers, 0, 4);
   memset(pup->quic_s_vers, 0, 4);
   pup->quic_zero_rtt = 0;
+  pup->quic_client_hello = NULL;
+  pup->quic_client_hello_len = 0;
   pup->is_stun_initiated = 0;
 
 #ifdef LOG_PERIODIC
@@ -747,14 +751,13 @@ uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
 #ifdef HAVE_OPENSSL
 
 
-void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payload_offset, quic_hdr hdr  ){
-
+void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len, int payload_offset, quic_hdr hdr  ){
     int err;
     EVP_CIPHER_CTX *ctx;
     int plaintext_len;
     int ret;
-    unsigned char plaintext [1500];
-    unsigned char client_hello [1500];
+    unsigned char plaintext [QUIC_MAX_PKT];
+    unsigned char client_hello [QUIC_MAX_PKT];
     int conn_id_len = hdr.dcid_len;
     // Check UDP packet long enough
     if (data_len<payload_offset || payload_offset<19)
@@ -844,13 +847,16 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     // Process plain text
     unsigned char * ptr = &plaintext[0];
     int max_length = 0;
+    int accul_bytes = 0;
     int iterations = 0;
 
-    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= 1500 &&
+    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= QUIC_MAX_PKT &&
            ptr < plaintext + hdr.pkt_len -18 ){
+        
         iterations ++;
-        if ( *ptr == 0x01 || *ptr == 0x00) // PING or PADDING
+        if ( *ptr == 0x01 || *ptr == 0x00) {// PING or PADDING
             ptr++;
+        }
         else if ( *ptr == 0x06 ){ //CRYPTO
             uint8_t delta = 0;
             uint8_t delta_tot = 0;
@@ -858,23 +864,54 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
             delta_tot += delta ;
             uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);
             delta_tot += delta ;
+            
+            // Normalize offset as relative to this packet, while the header refers to the entire client hello. Check it does not become negative
+            if (thisdir->pup->quic_client_hello_len<=offset)
+                offset = offset - thisdir->pup->quic_client_hello_len;
+            
             if (ptr + 1 + delta_tot + length > plaintext + plaintext_len ||
-                offset + length > 1500 )
+                offset + length > QUIC_MAX_PKT )
                break;
 
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             if (offset + length > max_length)
               max_length = offset + length;
             ptr=ptr + 1 + delta_tot+length;
-            
+            accul_bytes += length;
         }
         else{ // UNKNOWN FRAME
           break;
         }
     }
+    // Accumulate in thisdir->pup->quic_client_hello a number of accul_bytes bytes, if total is less than QUIC_MAX_ACCUL
+    if (accul_bytes>0 && thisdir->pup->quic_client_hello_len + accul_bytes < QUIC_MAX_ACCUL){
+        if (thisdir->pup->quic_client_hello == NULL){
+            // Allocate if first time
+            thisdir->pup->quic_client_hello = malloc (accul_bytes);
+            if (thisdir->pup->quic_client_hello == NULL)
+                return;
+            memcpy(thisdir->pup->quic_client_hello, client_hello, accul_bytes);
+            thisdir->pup->quic_client_hello_len = accul_bytes;
+        }
+        else if (thisdir->pup->quic_client_hello != NULL){
+            // Extend if needed
+            thisdir->pup->quic_client_hello = realloc (thisdir->pup->quic_client_hello,
+                                                       thisdir->pup->quic_client_hello_len + accul_bytes);
+            if (thisdir->pup->quic_client_hello == NULL)
+                return;
+            memcpy(thisdir->pup->quic_client_hello + thisdir->pup->quic_client_hello_len,
+                   client_hello, accul_bytes);
+            thisdir->pup->quic_client_hello_len += accul_bytes;
+        }
+    }
 
+}
+
+void search_QUIC_SNI(ucb *thisdir){
     // Parsing from tcpL7.c
     int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
+    char * client_hello = thisdir->pup->quic_client_hello;
+    int max_length = thisdir->pup->quic_client_hello_len;
   
     // Add session length = 1st byte of cipher suite section
     if (idx > max_length) 
@@ -908,6 +945,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
     int next = 0;
     char cname[81];
     int ext_type, ext_len, name_len, j, this_ii;
+    int iterations;
     
     while (ii < all_ext_len && idx+ii < max_length){
 
@@ -967,7 +1005,7 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
             case 0x0039:
                 this_ii = ii;
                 iterations = 0;
-                while(this_ii < ii + ext_len && this_ii>=0 && iterations <= 1500){
+                while(this_ii < ii + ext_len && this_ii>=0 && iterations <= QUIC_MAX_PKT){
                     
                     // Read Type and Len
                     uint8_t offset = 0;
@@ -987,7 +1025,8 @@ void search_QUIC_SNI(ucb * thisdir, unsigned char * data, int data_len, int payl
                           return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]='\0';
-                        thisdir->pup->quic_ua_string = url_encode(cname);
+                        if (thisdir->pup->quic_ua_string==NULL)
+                            thisdir->pup->quic_ua_string = url_encode(cname);
                     }
                     this_ii += offset_tot + param_len;
                     iterations ++;
@@ -1121,7 +1160,8 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
             }
            
 #ifdef HAVE_OPENSSL
-            search_QUIC_SNI(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr );
+            search_QUIC_client_hello(thisdir, base, data_len, 18 + hdr.dcid_len + hdr.scid_len + hdr.token_len, hdr );
+            search_QUIC_SNI(thisdir);
 #endif
 
             // Search 0-RTT

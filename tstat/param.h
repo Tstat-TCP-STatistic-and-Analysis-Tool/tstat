@@ -148,9 +148,9 @@ Increase this number on high speed network will help ...*/
 /* - same IP length */ 
 
 #define MIN_DELTA_T_UDP_DUP_PKT 1000.0 /* microsec (previously 50us) */
-#define CHECK_UDP_DUP
+// #define CHECK_UDP_DUP               /* Inactive by default, uncomment to activate */
 #define MIN_DELTA_T_TCP_DUP_PKT 2000.0 /* microsec (previously 50us) */
-#define CHECK_TCP_DUP
+// #define CHECK_TCP_DUP               /* Inactive by default, uncomment to activate */
 
 /* Until Tstat 2.1 the fixed snaplen size for pcap live captures was */
 /* hardcoded in tcpdump.h.                                           */
