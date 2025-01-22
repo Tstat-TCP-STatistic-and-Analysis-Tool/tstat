@@ -501,6 +501,12 @@ static inline char * rr_type2str(ldns_rr_type rcode)
       case LDNS_RR_TYPE_SPF:
           return ( "SPF");
           break;
+      case 64 : // Should use the constant LDNS_RR_TYPE_SVCB, but keep the number for compatibility with old libldns versions
+          return ( "SVCB");
+          break;
+      case 65: // Should use the constant LDNS_RR_TYPE_HTTPS, but keep the number for compatibility with old libldns versions
+          return ( "HTTPS");
+          break;
       case 32:
 	  /* Type 32 (0x0020) is wrongly used by NetBios on port 137 (RFC1002) even if
 	     officially allocated to NIMLOC/NIMROD (RFC1992)
