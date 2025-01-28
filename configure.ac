@@ -13,7 +13,7 @@ m4_define([_libtstat_version], [1.0.0])
 
 AC_INIT([tstat], 
         m4_esyscmd([echo _version_major._version_minor._version_bugfix | tr -d '\n']),
-        [mellia@polito.it, munafo@polito.it])
+        [marco.mellia@polito.it, maurizio.munafo@polito.it])
 
 AC_CONFIG_AUX_DIR(config)
 AM_INIT_AUTOMAKE

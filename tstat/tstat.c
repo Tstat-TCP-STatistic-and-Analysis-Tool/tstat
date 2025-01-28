@@ -3681,6 +3681,17 @@ ParseArgs (int *pargc, char *argv[])
 #ifdef SUPPORT_IPV6
          if (tot_internal_netsv6==0)
 	  {
+        internal_net_maskv6[0] = 0;
+        inet_pton(AF_INET6,"::",&(internal_net_listv6[0]));
+        tot_internal_netsv6=1;
+        if (debug)
+            {
+            char s[INET6_ADDRSTRLEN];
+            inet_ntop (AF_INET6,&(internal_net_listv6[0]),s,INET6_ADDRSTRLEN);
+            fprintf (fp_stdout, "Adding: %s as %s ",s,"::");
+            fprintf (fp_stdout, "with mask %u\n",
+                    internal_net_maskv6[0]);
+            }        
             fprintf(fp_stdout, 
                ANSI_BOLD "Warning:" ANSI_RESET " -N option contains no IPv6 network.\n"
                "         All IPv6 subnets are assumed to be internal\n");
