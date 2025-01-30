@@ -272,6 +272,7 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
   memset(pup->quic_c_vers, 0, 4);
   memset(pup->quic_s_vers, 0, 4);
   pup->quic_zero_rtt = 0;
+  pup->quic_ech = 0;
   pup->quic_client_hello = NULL;
   pup->quic_client_hello_len = 0;
   pup->is_stun_initiated = 0;
@@ -815,12 +816,38 @@ void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len,
     if (err !=0)
         return;
 
-    /* Decrypt Header */
-    AES_KEY decKey;
-    if (AES_set_encrypt_key(hp, 128, &decKey) < 0 || payload_offset+3 + 16 > data_len)
-      return;
+
     // Mask obtained from encrypting first 16B with 'hp', but assuming 4B pkt len
-    AES_encrypt(data+payload_offset+3, plaintext, &decKey);
+    
+    /* Old code using deprecated functions*/
+    /* Decrypt Header */
+    // AES_KEY decKey;
+    // if (AES_set_encrypt_key(hp, 128, &decKey) < 0 || payload_offset+3 + 16 > data_len)
+    //   return;
+    // AES_encrypt(data+payload_offset+3, plaintext, &decKey); // deprecated
+
+    /* Use a decryption context. Using AES_set_encrypt_key is now not needed*/
+    if (payload_offset+3 + 16 > data_len)
+       return;
+    
+    EVP_CIPHER_CTX *ctx_mask;
+
+    if (!(ctx_mask = EVP_CIPHER_CTX_new()))
+        return;
+
+    if (1 != EVP_EncryptInit_ex(ctx_mask, EVP_aes_128_cbc(), NULL, hp, 0)){
+        EVP_CIPHER_CTX_free(ctx_mask);
+        return;
+    }
+
+    int len = 0;
+    if (1 != EVP_EncryptUpdate(ctx_mask, plaintext, &len, data+payload_offset+3, 16)){
+        EVP_CIPHER_CTX_free(ctx_mask);
+        return;
+    }
+
+    EVP_CIPHER_CTX_free(ctx_mask);
+    
     // Note: Working only for packet numbers of 1B
     uint8_t pkn = ((uint8_t)*(data+payload_offset-1)) ^ plaintext[1]; 
 
@@ -1034,7 +1061,9 @@ void search_QUIC_SNI(ucb *thisdir){
 
                 ii += ext_len;
                 break;
-
+            case 65037: // From https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
+                thisdir->pup->quic_ech=ext_len;
+                break;
             default:
                 ii += ext_len;
                 break;
@@ -1170,7 +1199,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
             if (ptr_next + 5 < base + data_len ){
                 quic_hdr hdr_second = parse_quic_hdr(ptr_next, 5);
                 if (hdr_second.packet_type == 1)
-                    thisdir->pup->quic_zero_rtt=1;
+                    thisdir->pup->quic_zero_rtt+=1;
             }    
                     
         }              
@@ -1180,7 +1209,7 @@ void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                   hdr.header_form == 1 && hdr.packet_type == 1 &&
                   hdr.dcid_len > 0     && hdr.fixed_bit == 1   &&
                   hdr.dcid_len <= 20   && hdr.scid_len <= 20  )
-            thisdir->pup->quic_zero_rtt=1;
+            thisdir->pup->quic_zero_rtt+=1;
         
 
        break;

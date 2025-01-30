@@ -1249,6 +1249,7 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf (fp, " quic_c_vers:%d", col++);
      wfprintf (fp, " quic_s_vers:%d", col++);
      wfprintf (fp, " quic_zero_rtt:%d", col++);
+     wfprintf (fp, " quic_ech:%d", col++);
 #endif
 #ifdef PACKET_STATS
        /*******************************

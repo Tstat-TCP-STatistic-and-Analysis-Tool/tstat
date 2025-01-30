@@ -781,6 +781,7 @@ make_p2p_conn_stats (void * flow, int tproto)
         wfprintf (fp_udp_logc, " 0x%08x", ntohl(*(uint32_t*)(thisflow->quic_c_vers)) );
         wfprintf (fp_udp_logc, " 0x%08x", ntohl(*(uint32_t*)(thisflow->quic_s_vers)) );
         wfprintf (fp_udp_logc, " %d", thisflow->quic_zero_rtt );
+        wfprintf (fp_udp_logc, " %d", thisflow->quic_ech );
   }
   else{
         wfprintf (fp_udp_logc, " -" ); 

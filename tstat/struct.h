@@ -1170,6 +1170,7 @@ struct sudp_pair
   char quic_c_vers [4];
   char quic_s_vers [4];
   uint8_t quic_zero_rtt;
+  uint8_t quic_ech;
   char *quic_client_hello;
   uint16_t quic_client_hello_len;
 
