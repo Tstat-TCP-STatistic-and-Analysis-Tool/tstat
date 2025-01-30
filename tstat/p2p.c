@@ -787,6 +787,7 @@ make_p2p_conn_stats (void * flow, int tproto)
         wfprintf (fp_udp_logc, " -" ); 
         wfprintf (fp_udp_logc, " -" );
         wfprintf (fp_udp_logc, " 0");
+        wfprintf (fp_udp_logc, " 0");
   }
   
 
