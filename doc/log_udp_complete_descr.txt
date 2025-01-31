@@ -34,7 +34,8 @@ is included
 #  21       # QUIC User Agent        # -     # User Agent reported by QUIC connections [+][$]
 #  22       # QUIC Client Version    # -     # QUIC version indicated by the client
 #  23       # QUIC Server Version    # -     # QUIC version indicated by the server 
-#  24       # QUIC Zero RTT          # 0/1   # QUIC Zero-RTT signaled
+#  24       # QUIC Zero RTT          # -     # QUIC Zero-RTT Packets
+#  25       # QUIC ECH               # bytes # QUIC length of possible Encrypted Client Hello
 
 [+] The QUIC User Agent is printed as a percent-encoded (URL-encoded) string
 (https://en.wikipedia.org/wiki/Percent-encoding).

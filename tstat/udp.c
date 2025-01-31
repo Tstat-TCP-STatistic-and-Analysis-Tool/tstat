@@ -1061,8 +1061,9 @@ void search_QUIC_SNI(ucb *thisdir){
 
                 ii += ext_len;
                 break;
-            case 65037: // From https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
+            case 0xfe0d: // = 65037 From https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
                 thisdir->pup->quic_ech=ext_len;
+                ii += ext_len;
                 break;
             default:
                 ii += ext_len;
