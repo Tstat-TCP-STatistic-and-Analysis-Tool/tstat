@@ -95,6 +95,12 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
   if (ret == LDNS_STATUS_OK && pkt)
   {
 
+    // Since it is a well formed DNS packet, we might set the UDP connection type to DNS, if not yet identified
+    // This should cover all the less common DNS query types that IPP2P does not consider
+
+    if (thisdir->type == UDP_UNKNOWN)
+       thisdir->type = DNS;
+ 
     // Check if it is Request or Response and parse Packet Fields
     if ( ldns_pkt_qr (pkt ) == 1 )
     {

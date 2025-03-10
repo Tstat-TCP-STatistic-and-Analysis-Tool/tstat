@@ -793,7 +793,8 @@ udp_search_dns (unsigned char *haystack,
   // Following the example of L7 Filter, we match QUESTION (either 1 or 2) at (offset 4-5)
   // and the fact that the queries start with 0x01-0x3F followed by [a-z0-9] (offset 12-13)
   // This should be enough if we have at least 22 bytes in the payload.
-  // If we have more bytes, we look for Type (0x0001-0x0010 or 0x001c) 
+  // If we have more bytes, we look for the most common types, i.e.  
+  // Type (0x0001-0x0010, 0x001c, 0x0021,0x002e, 0x0040 and 00x0041) 
   // and Class (0x01,0x03,0x04,0xff), that are located after the Name termination 0x00
   // If you really want to be paranoid, you can check that characters in Name are in the 
   // legitimate charset.
@@ -824,7 +825,8 @@ udp_search_dns (unsigned char *haystack,
       {
         if ( t[idx+1]==0 &&
 	    ( ( t[idx+2]>=0x01 && t[idx+2]<=0x10) || t[idx+2]==0x1c ||
-	        t[idx+2]==0x26 || /* A6 IPv6 with indirection */ 
+	        t[idx+2]==0x40 || t[idx+2]==0x41 || /* SVCB / HTTPS */
+	        t[idx+2]==0x21 || t[idx+2]==0x2e || /* SRV / RRSIG */
 	      ( t[idx+2]==0xff || t[idx+2]==0xfd || t[idx+2]==0xfc )  /* QTYPEs */
 	    ) &&
 	     t[idx+3]==0 &&
@@ -1176,11 +1178,13 @@ search_soul (const unsigned char *payload, const int plen, int payload_len)
 	  const unsigned char *w = payload + 9 + y;
 	  if (get_u32 (w, 0) == 0x01
 	      && (get_u16 (w, 4) == 0x4600 || get_u16 (w, 4) == 0x5000)
-	      && get_u32 (w, 6) == 0x00);
+	      && get_u32 (w, 6) == 0x00)
+        {
 #ifdef IPP2P_DEBUG_SOUL
 	  printk (KERN_DEBUG "Soulssek special client command recognized\n");
 #endif /* IPP2P_DEBUG_SOUL */
 	  return ((IPP2P_SOUL * 100) + 9);
+        }
 	}
     }
   return 0;
