@@ -35,7 +35,7 @@ extern Bool dns_enabled;
 #define get_u8(X,O)   (*(tt_uint8  *)(X + O))
 #define get_u16(X,O)  (*(tt_uint16 *)(X + O))
 #define get_u32(X,O)  (*(tt_uint32 *)(X + O))
-#define QUIC_MAX_ACCUL 9000
+#define QUIC_MAX_ACCUL 15000
 #define QUIC_MAX_PKT 1500
 
 #if __BIG_ENDIAN__
@@ -758,7 +758,7 @@ void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len,
     int plaintext_len;
     int ret;
     unsigned char plaintext [QUIC_MAX_PKT];
-    unsigned char client_hello [QUIC_MAX_PKT];
+    unsigned char client_hello [QUIC_MAX_ACCUL];
     int conn_id_len = hdr.dcid_len;
     // Check UDP packet long enough
     if (data_len<payload_offset || payload_offset<19)
@@ -877,6 +877,10 @@ void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len,
     int accul_bytes = 0;
     int iterations = 0;
 
+    // Pre fill in case is not the first packet
+    if (thisdir->pup->quic_client_hello != NULL)
+        memcpy(client_hello, thisdir->pup->quic_client_hello, thisdir->pup->quic_client_hello_len);
+
     while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= QUIC_MAX_PKT &&
            ptr < plaintext + hdr.pkt_len -18 ){
         
@@ -891,15 +895,9 @@ void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len,
             delta_tot += delta ;
             uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);
             delta_tot += delta ;
-            
-            // Normalize offset as relative to this packet, while the header refers to the entire client hello. Check it does not become negative
-            if (thisdir->pup->quic_client_hello_len<=offset)
-                offset = offset - thisdir->pup->quic_client_hello_len;
-            
             if (ptr + 1 + delta_tot + length > plaintext + plaintext_len ||
-                offset + length > QUIC_MAX_PKT )
+                offset + length > QUIC_MAX_ACCUL )
                break;
-
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             if (offset + length > max_length)
               max_length = offset + length;
@@ -910,61 +908,51 @@ void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len,
           break;
         }
     }
-    // Accumulate in thisdir->pup->quic_client_hello a number of accul_bytes bytes, if total is less than QUIC_MAX_ACCUL
-    if (accul_bytes>0 && thisdir->pup->quic_client_hello_len + accul_bytes < QUIC_MAX_ACCUL){
-        if (thisdir->pup->quic_client_hello == NULL){
-            // Allocate if first time
-            thisdir->pup->quic_client_hello = malloc (accul_bytes);
-            if (thisdir->pup->quic_client_hello == NULL)
-                return;
-            memcpy(thisdir->pup->quic_client_hello, client_hello, accul_bytes);
-            thisdir->pup->quic_client_hello_len = accul_bytes;
-        }
-        else if (thisdir->pup->quic_client_hello != NULL){
-            // Extend if needed
-            thisdir->pup->quic_client_hello = realloc (thisdir->pup->quic_client_hello,
-                                                       thisdir->pup->quic_client_hello_len + accul_bytes);
-            if (thisdir->pup->quic_client_hello == NULL)
-                return;
-            memcpy(thisdir->pup->quic_client_hello + thisdir->pup->quic_client_hello_len,
-                   client_hello, accul_bytes);
-            thisdir->pup->quic_client_hello_len += accul_bytes;
-        }
+            
+    thisdir->pup->quic_client_hello_len = QUIC_MAX_ACCUL;
+    
+    if (thisdir->pup->quic_client_hello == NULL){
+        thisdir->pup->quic_client_hello = malloc (thisdir->pup->quic_client_hello_len);
+        if (thisdir->pup->quic_client_hello == NULL)
+          return;
     }
+    memcpy(thisdir->pup->quic_client_hello, client_hello,thisdir->pup->quic_client_hello_len);                
 
 }
 
 void search_QUIC_SNI(ucb *thisdir){
+                
     // Parsing from tcpL7.c
     int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
     char * client_hello = thisdir->pup->quic_client_hello;
     int max_length = thisdir->pup->quic_client_hello_len;
-  
+                
     // Add session length = 1st byte of cipher suite section
     if (idx > max_length) 
       return;
-
+    
     idx += 1 + client_hello[idx];
 
     // Add length of cipher suite section = 1st byte of compression section
     if (idx + 2 > max_length) 
       return;
-
+    
     idx += 2 + ntohs(*(tt_uint16 *)(client_hello+idx)); 
 
     // Add length of compression section = 1st byte of extensions section
     if (idx > max_length)
       return;
-
+    
     idx += 1 + client_hello[idx];
 
     // Full extensions section length
     if (idx + 2 > max_length) 
       return;
-
+    
     int all_ext_len = ntohs(*(tt_uint16 *)(client_hello+idx));
     if (all_ext_len < 0)
       return;
+    
     idx += 2; 
 
     // From tcpL7.c
@@ -973,9 +961,8 @@ void search_QUIC_SNI(ucb *thisdir){
     char cname[81];
     int ext_type, ext_len, name_len, j, this_ii;
     int iterations;
-    
-    while (ii < all_ext_len && idx+ii < max_length){
 
+    while (ii < all_ext_len && idx+ii < max_length){
         // extract extension type
         if (idx+ii+2 > max_length) 
           return;
@@ -1062,6 +1049,7 @@ void search_QUIC_SNI(ucb *thisdir){
                 ii += ext_len;
                 break;
             case 0xfe0d: // = 65037 From https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
+
                 thisdir->pup->quic_ech=ext_len;
                 ii += ext_len;
                 break;
