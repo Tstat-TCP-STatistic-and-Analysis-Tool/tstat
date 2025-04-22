@@ -352,6 +352,7 @@ void dump_init(void) {
     dump_reset_dump_file(proto2dump, DUMP_TCP_COMPLETE, "tcp_complete");
     dump_reset_dump_file(proto2dump, DUMP_UDP_STUN, "udp_stun");
     dump_reset_dump_file(proto2dump, UDP_MTURN, "udp_mturn");
+    dump_reset_dump_file(proto2dump, UDP_SYE, "udp_sye");
 }
 
 /*
@@ -622,7 +623,7 @@ void dump_flow_stat (struct ip *pip,
              dump_to_file(&proto2dump[P2P_UTP], pip, plast);
          }
         /* dump STUN INITIATED */
-        if (proto2dump[DUMP_UDP_STUN].enabled)
+        else if (proto2dump[DUMP_UDP_STUN].enabled)
          {
 
            /* Check if it must be classified as a STUN flow */
@@ -636,7 +637,7 @@ void dump_flow_stat (struct ip *pip,
            }
            
          }
-        if (proto2dump[UDP_QUIC].enabled)
+        else if (proto2dump[UDP_QUIC].enabled)
          {
             /* 
                Since QUIC classification is behavioral, we dump both already classified datagrams,
@@ -649,6 +650,22 @@ void dump_flow_stat (struct ip *pip,
                  )
                )
              dump_to_file(&proto2dump[UDP_QUIC], pip, plast);
+         }
+        /* dump SYE protocol data */
+        else if (proto2dump[UDP_SYE].enabled)
+         {
+            /* 
+               Since SYE classification is behavioral, we dump both already 
+               classified datagrams, and datagrams which are not classified but
+               that are already in a valid state of the identification 
+               state machine.
+            */
+            if ( ucb_type == UDP_SYE || 
+                 ( (ucb_type==UDP_UNKNOWN || ucb_type==FIRST_RTP_PLUS || ucb_type==FIRST_RTP || ucb_type==FIRST_RTCP ) &&
+                   (mydir->SYE_state > SYE_UNKNOWN || otherdir->SYE_state > SYE_UNKNOWN)
+                 )
+               )
+             dump_to_file(&proto2dump[UDP_SYE], pip, plast);
          }
     	else if (proto2dump[ucb_type].enabled) 
     	 {
@@ -742,13 +759,13 @@ void dump_flush(Bool trace_completed) {
             "additional option:\n"
             "---\n"); 
         if (udp_maxpackets!=0)
-          fprintf(fp_log,"udp_maxpackets = %d\n",udp_maxpackets);
+          fprintf(fp_log,"udp_maxpackets = %ld\n",udp_maxpackets);
         if (udp_maxbytes!=0)
-          fprintf(fp_log,"udp_maxbytes = %d\n",  udp_maxbytes);
+          fprintf(fp_log,"udp_maxbytes = %ld\n",  udp_maxbytes);
         if (tcp_maxpackets!=0)
-          fprintf(fp_log,"tcp_maxpackets = %d\n",tcp_maxpackets);
+          fprintf(fp_log,"tcp_maxpackets = %ld\n",tcp_maxpackets);
         if (tcp_maxbytes!=0)
-          fprintf(fp_log,"tcp_maxbytes = %d\n",  tcp_maxbytes);
+          fprintf(fp_log,"tcp_maxbytes = %ld\n",  tcp_maxbytes);
         if (stop_dumping_mask!=0)
           fprintf(fp_log,"stop_dumping_mask =  %d # (0x%X)\n",stop_dumping_mask,stop_dumping_mask);
         fclose(fp_log);

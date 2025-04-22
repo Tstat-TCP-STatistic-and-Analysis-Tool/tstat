@@ -859,6 +859,7 @@ enum udp_type
   FIRST_RTP_PLUS,
   RTP_PLUS,
   UDP_MTURN,
+  UDP_SYE,
   LAST_UDP_PROTOCOL
 };
 
@@ -927,6 +928,8 @@ enum udp_type
  printf("RTP_PLUS = %d\n",temp); \
  temp = UDP_MTURN; \
  printf("UDP_MTURN = %d\n",temp); \
+ temp = UDP_SYE; \
+ printf("UDP_SYE = %d\n",temp); \
 }
 
 
@@ -1049,6 +1052,13 @@ enum QUIC_udp_state
   QUIC_DATA_SENT
 };
 
+enum SYE_udp_state
+{
+  SYE_UNKNOWN=0,
+  SYE_CMD_SEEN,
+  SYE_DATA_SEEN
+};
+
 /* minimal support for UDP "connections" */
 typedef struct ucb
 {
@@ -1073,6 +1083,9 @@ typedef struct ucb
   int QUIC_seq_nr;
   int QUIC_dir; /* 0 (client side) / 1 (server side) */
   Bool is_QUIC;
+
+  Bool is_SYE;
+  enum SYE_udp_state SYE_state;
 
   int VOD_scrambled_sig[2];
   u_short VOD_count;

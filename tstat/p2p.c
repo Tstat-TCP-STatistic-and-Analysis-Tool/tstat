@@ -991,6 +991,9 @@ int UDP_p2p_to_L7type (ucb *thisflow)
     case UDP_MTURN:
       return L7_FLOW_MTURN;
       
+    case UDP_SYE:
+      return L7_FLOW_SYE;  
+      
     case UDP_UNKNOWN:
     case FIRST_RTP:
     case FIRST_RTCP:

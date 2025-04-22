@@ -192,9 +192,21 @@ NewUTP (struct ip *pip, struct udphdr *pudp)
 
   pup->c2s.uTP_state = UTP_UNKNOWN;
   pup->s2c.uTP_state = UTP_UNKNOWN;
+  pup->c2s.is_uTP = 0;
+  pup->s2c.is_uTP = 0;
 
   pup->c2s.QUIC_state = QUIC_UNKNOWN;
   pup->s2c.QUIC_state = QUIC_UNKNOWN;
+  pup->c2s.is_QUIC = 0;
+  pup->s2c.is_QUIC = 0;
+  
+  pup->c2s.SYE_state = SYE_UNKNOWN;
+  pup->s2c.SYE_state = SYE_UNKNOWN;
+  pup->c2s.is_SYE = 0;
+  pup->s2c.is_SYE = 0;
+
+  pup->c2s.is_VOD = 0;
+  pup->s2c.is_VOD = 0;
   
 #ifdef DNS_CACHE_PROCESSOR
  if (dns_enabled)
@@ -702,6 +714,115 @@ void check_uTP(struct ip * pip, struct udphdr * pudp, void *plast,
   return;
 }
 
+void check_SYE(struct ip * pip, struct udphdr * pudp, void *plast,
+                ucb *thisdir, ucb *otherdir)
+{
+  int payload_len;
+  int data_len;
+  unsigned char *base;
+
+  if (thisdir->is_SYE==1 && otherdir->is_SYE==1)
+    return;  /* Flow already classified */
+
+  payload_len = ntohs (pudp->uh_ulen);
+  /* This is the UDP complete length, included the header size */
+
+  base = (unsigned char *) pudp;
+  data_len = (unsigned char *) plast - (unsigned char *) base + 1;
+
+/*
+  Tentative SYE identification
+  Two types of messages, with apparent semantics:
+    Command -> 0x0a 0x00 0x18 0x00 0x42 0x00 0x00 0x00 
+    Data    -> 0x14 0x-- <2 bytes message length>
+               0x15 0x-- <2 bytes message length>
+              
+   Client sends only commands, server sends both commands and data.
+   Communication pattern is usually 
+              Client               Server
+                       CMD -->
+                       CMD -->
+                       <-- CMD
+                       CMD -->
+                       <-- DATA
+                       <-- DATA
+                       ......
+   
+   We consider the protocol identified as soon as we have seen one CMD message
+   in one direction and one DATA message in the opposite one.
+*/
+      
+  if (data_len < 16 || payload_len == 0)
+    return;  /* We are looking at least 8 bytes */
+
+  if ( !( 
+  	     (base[8]==0x0a) || (base[8]==0x14) || (base[8]==0x15) 
+     	)
+     )  
+    return; /* Minimal protocol matching failed*/
+
+  switch(thisdir->SYE_state)
+   {
+     case SYE_UNKNOWN:
+     case SYE_CMD_SEEN:
+     case SYE_DATA_SEEN:          
+       if (base[8]==0x0a && base[10]==0x18 && base[12]==0x42 && base[14]==0x00)
+         { 
+           thisdir->SYE_state = SYE_CMD_SEEN;
+           // printf("SYE_CMD_SEEN\n");
+         }
+       else if ((base[8]==0x14 || base[8]==0x15)  && 
+                 get_u16(base,10)==payload_len-8) 
+         {
+           thisdir->SYE_state = SYE_DATA_SEEN;
+           // printf("SYE_DATA_SEEN\n");
+         }
+       else 
+         {
+           // if (thisdir->SYE_state != SYE_UNKNOWN)
+           //   printf("SYE state reset\n");
+           thisdir->SYE_state = SYE_UNKNOWN;
+         }
+       break;  
+     default:
+        break;
+   }
+   
+   if ( (thisdir->SYE_state==SYE_CMD_SEEN && otherdir->SYE_state==SYE_DATA_SEEN)
+        ||
+        (thisdir->SYE_state==SYE_DATA_SEEN && otherdir->SYE_state==SYE_CMD_SEEN)
+        )
+     { 
+       thisdir->is_SYE = 1; 
+       otherdir->is_SYE = 1;
+     }
+   
+  if (thisdir->is_SYE==1 && otherdir->is_SYE==1)
+   {
+     if (thisdir->type==UDP_UNKNOWN ||
+    	 thisdir->type==FIRST_RTP_PLUS || 
+    	 thisdir->type==FIRST_RTP || 
+    	 thisdir->type==FIRST_RTCP)
+      { thisdir->type=UDP_SYE; }
+     else
+      { 
+         fprintf(fp_stderr, "SYE type overriding %d\n",thisdir->type);
+    	thisdir->type=UDP_SYE; 
+      }
+
+     if (otherdir->type==UDP_UNKNOWN ||
+    	 otherdir->type==FIRST_RTP_PLUS || 
+    	 otherdir->type==FIRST_RTP || 
+    	 otherdir->type==FIRST_RTCP)
+      { otherdir->type=UDP_SYE; }
+     else
+      { 
+         fprintf(fp_stderr, "SYE type overriding %d\n",otherdir->type);
+    	otherdir->type=UDP_SYE; 
+      }
+   }
+  return;
+}
 
 
 typedef struct {
@@ -1654,6 +1775,9 @@ behavioral_flow_wrap (struct ip *pip, void *pproto, int tproto, void *pdir,
 	 }
 	 */
 	 
+	if (pup_save->packets<MAX_UDP_SYE) 
+      check_SYE(pip, pudp,plast,thisdir,otherdir);
+	  
 	if (pup_save->packets<MAX_UDP_UTP)
 	  check_uTP(pip, pudp,plast,thisdir,otherdir);
 	

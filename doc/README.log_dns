@@ -37,7 +37,7 @@ If there is any issue or the files are not in the default locations, the 'config
 command will fail.
 
 As a reference for a non standard installation, when Tstat is compiled on MacOS, 
-the ldns package is not normally not available.
+the ldns package is not normally available.
 It can be installed, for example, using MacPort ('port install ldns') but the libraries 
 will be in a non-standard location, so information must be provided to 'configure' to find
 them

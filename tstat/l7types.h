@@ -87,6 +87,7 @@
 #define L7_FLOW_QUIC		45
 #define L7_FLOW_FB0		46
 #define L7_FLOW_MTURN   47
+#define L7_FLOW_SYE		48
 
 #define L7_FLOW_UNKNOWN         49    /* Unknown is set to the largest ID */
 #define L7_FLOW_TOT             50    /* Large to leave space for future  */
