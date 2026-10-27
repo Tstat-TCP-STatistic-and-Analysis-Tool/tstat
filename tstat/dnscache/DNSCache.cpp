@@ -88,27 +88,3 @@ struct DNS_data* getEntry(unsigned long int client_ip, unsigned long int server_
 	}
 	return NULL;
 }
-
-
-unsigned char* get(unsigned long int client_ip, unsigned long int server_ip){
-	if(ip_hashtable.count(client_ip)>0){
-		std::map<unsigned long int, DNSEntry*> &server_map = ip_hashtable[client_ip];
-		if(server_map.count(server_ip)>0){
-			DNSEntry entry = *server_map[server_ip];
-			return entry.getHostname();
-		}
-	}
-	return NULL;
-}
-
-struct in_addr* get_dns_server(unsigned long int client_ip, unsigned long int server_ip){
-	if(ip_hashtable.count(client_ip)>0){
-			std::map<unsigned long int, DNSEntry*> &server_map = ip_hashtable[client_ip];
-			if(server_map.count(server_ip)>0){
-				DNSEntry entry = *server_map[server_ip];
-				return entry.getDNSServer();
-			}
-		}
-	return NULL;
-}
-

@@ -17,7 +17,6 @@
  */
 
 #include "tstat.h"
-#include "http.h"
 #include "tcpL7.h"
 #include <regex.h>
 
@@ -518,10 +517,8 @@ void http_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
   /*          wfprintf (fp_http_logc,"\t%d",seqnum-tcp_stats->syn-1); */
             wfprintf (fp_http_logc,"\t%s\t%s",http_method,http_host);
 
-#ifdef DNS_CACHE_PROCESSOR
               /* DNS server */
                   wfprintf (fp_http_logc, "\t%s",ptp->dns_name!=NULL?ptp->dns_name:"-");
-#endif
 
             wfprintf (fp_http_logc,"\t%s%s\t%s%s\t%s%s",http_url_private,http_url_tail,http_referer_private,http_referer_tail,http_ua,http_ua_tail);
             wfprintf (fp_http_logc, "\t%s%s\t%s", http_cookie, http_cookie_tail,http_dnt);
@@ -1066,10 +1063,8 @@ void http_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
   /*          wfprintf (fp_http_logc,"\t%d",seqnum-tcp_stats->syn-1); */
             wfprintf (fp_http_logc,"\t%s\t%s","REQ2",http_host);
 
-#ifdef DNS_CACHE_PROCESSOR
               /* DNS server */
                   wfprintf (fp_http_logc, "\t%s",ptp->dns_name!=NULL?ptp->dns_name:"-");
-#endif
 
             wfprintf (fp_http_logc,"\t%s%s%s\t%s%s%s\t%s%s%s",http_url_head,http_url_private,http_url_tail,
 		                                            http_referer_head,http_referer_private,http_referer_tail,

@@ -16,10 +16,8 @@
  *
 */
 #include "tstat.h"
-#include "dump.h"
 #include "options.h"
 #include "globals.h"
-#include <string.h>
 
 typedef void ini_section_handler(char * param_name, param_value param_value);
 typedef void ini_section_limit(void);

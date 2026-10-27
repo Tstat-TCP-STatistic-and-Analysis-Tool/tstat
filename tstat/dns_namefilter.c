@@ -65,59 +65,6 @@ int  init_DNSfilter (char *filename, Bool enable);
 Bool check_DNSname (char *name);
 void enable_DNSfilter (Bool enable);
 
-char * readline2(FILE *fp, int skip_comment, int skip_void_lines) {
-    static char *buf = NULL;
-    static int buf_size = 0;
-    static int next_pos = 0;
-    char *tmp, curr_c;
-    int comment_started = 0;
-
-    if (buf == NULL) {
-        buf = malloc(BUF_SIZE * sizeof(char));
-        buf_size = BUF_SIZE;
-        next_pos = 0;
-    }
-
-    buf[0] = '\0';
-    next_pos = 0;
-    while (1) {
-        if (next_pos + 1 == buf_size) {
-            buf_size += BUF_SIZE;
-            tmp = malloc(buf_size * sizeof(char));
-            strcpy(tmp, buf);
-            free(buf);
-            buf = tmp;
-        }
-
-        curr_c = fgetc(fp);
-        if (feof(fp)) {
-            buf[next_pos] = '\0';
-            break;
-        }
-
-        comment_started |= skip_comment && (curr_c == '#');
-        if (!comment_started || curr_c == '\n') {
-            buf[next_pos] = curr_c;
-            buf[next_pos + 1] = '\0';
-            next_pos++;
-        }
-
-        if (curr_c == '\n') {
-            if (buf[0] == '\n' && skip_void_lines) {
-                buf[0] = '\0';
-                next_pos = 0;
-                comment_started = 0;
-                continue;
-            }
-            else
-                break;
-       }
-    }
-
-    if (buf[0] == '\0')
-        return NULL;
-    return buf;
-}
 
 void enable_DNSfilter (Bool enable)
 {

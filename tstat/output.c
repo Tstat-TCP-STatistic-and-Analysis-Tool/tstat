@@ -19,11 +19,8 @@
 
 #include "tstat.h"
 
-extern Bool zlib_logs;
 
 static inline void tv_sub (struct timeval *plhs, struct timeval rhs);
-void tv_add (struct timeval *plhs, struct timeval rhs);
-Bool tv_same (struct timeval lhs, struct timeval rhs);
 
 
 double
@@ -31,7 +28,6 @@ Average (double sum, int count)
 {
   return ((double) sum / ((double) count + .0001));
 }
-
 
 
 double
@@ -79,7 +75,6 @@ elapsed (struct timeval time1, struct timeval time2)
 }
 
 
-
 /* subtract the rhs from the lhs, result in lhs */
 inline void
 tv_sub (struct timeval *plhs, struct timeval rhs)
@@ -94,29 +89,6 @@ tv_sub (struct timeval *plhs, struct timeval rhs)
       plhs->tv_sec -= 1;
     }
   plhs->tv_sec -= rhs.tv_sec;
-}
-
-
-/* add the RHS to the LHS, answer in *plhs */
-void
-tv_add (struct timeval *plhs, struct timeval rhs)
-{
-  plhs->tv_sec += rhs.tv_sec;
-  plhs->tv_usec += rhs.tv_usec;
-
-  if (plhs->tv_usec >= US_PER_SEC)
-    {
-      plhs->tv_usec -= US_PER_SEC;
-      plhs->tv_sec += 1;
-    }
-}
-
-
-/* are the 2 times the same? */
-Bool
-tv_same (struct timeval lhs, struct timeval rhs)
-{
-  return ((lhs.tv_sec == rhs.tv_sec) && (lhs.tv_usec == rhs.tv_usec));
 }
 
 
@@ -146,7 +118,6 @@ tv_cmp (struct timeval lhs, struct timeval rhs)
 }
 
 
-
 char *
 elapsed2str (double etime)
 {
@@ -163,43 +134,12 @@ elapsed2str (double etime)
   return (buf);
 }
 
-char *
-get_basename (char *filename)
-{
-  char *temp, *base;
 
-  base = (char *) (malloc (100));
-
-  strncpy (base, filename, 100);
-  temp = strstr (filename, "/");
-  while (temp != NULL)
-    {
-      temp++;
-      strncpy (base, temp, 100);
-      temp = strstr (temp, "/");
-    }
-
-  strcat (base, ".out");
-  return (base);
-}
-
-#ifdef HAVE_ZLIB
 int wfprintf(FILE *stream, const char* format, ... ) {
 static char buffer[8192];
-        int err;
         va_list args;
         va_start( args, format );
         vsnprintf( buffer,8192, format, args );
         va_end( args );
-	
-        if (!zlib_logs)
-	 {
-           err = fputs(buffer, (FILE *)stream);
-	 }
-	else
-	 {
-           err= gzputs( (gzFile*)stream, buffer );
-	 }
-  return err;
+        return fputs(buffer, stream);
 }
-#endif

@@ -22,27 +22,6 @@
 #define HISTO_NAME_MAXLEN  (RRD_NAME_MAXLEN+20)
 #define HISTO_DESCR_MAXLEN 256
 
-struct dhisto
-{
-  double min;
-  double max;
-  double bin_size;
-  struct dato *data;
-};
-
-struct dato
-{
-  int val;
-  struct dato *next;
-};
-
-struct vhisto
-{
-  double min;
-  double max;
-  double bin_size;
-  struct vdato *data;
-};
 
 /****************aste************/
 struct double_histo_list
@@ -50,22 +29,17 @@ struct double_histo_list
   char name[HISTO_NAME_MAXLEN];
   char descr[HISTO_DESCR_MAXLEN];
 
-#define HISTO_PRINT_GLOBAL  3 
-#define HISTO_PRINT_CURRENT 1 
-
 #define HISTO_OFF 0 
 #define HISTO_ON  1
 #define HISTO_RRD 2
   int flag; 
   
   
-#ifdef HAVE_RRDTOOL
 /*-----------------------------------------------------------*/
 /* RRDtools 				                     */
   struct rrdstat st;
   struct rrdconf conf;
 /*-----------------------------------------------------------*/
-#endif
   long min;
   long max;
   long bin_size;
@@ -88,23 +62,10 @@ struct double_histo_list
   long *first_data;
   long *second_data;
   long *current_data;
-  int64_t *global_data;
   struct double_histo_list *next;
 };
 /*********************************/
 
-
-struct adx
-{
-  struct in_addr ip;
-  unsigned long src_hits;
-  unsigned long dst_hits;
-  unsigned long long src_bytes;
-  unsigned long long dst_bytes;
-  double max_uprate;
-  double max_downrate;
-  struct adx *next;
-};
 
 /* Limits for SHORT */
 #define SHORT_MM_CL_B 100000	/*[bytes] */
@@ -113,16 +74,10 @@ struct adx
 #define BITRATE_MIN_PKTS 5
 
 
-
-
 /* prototypes of functions */
 
-void histo_set_conf(char *fname); 
-void histo_parse_conf();
 struct double_histo_list *find_histo(char *hname);
 void alloc_histo (struct double_histo_list *thisto);
-
-void alloc_adx(int idx);
 
 struct double_histo_list *first_histo_list ();
 void create_all_histo (void);
@@ -136,24 +91,10 @@ void update_fake_histos();
 void swap_histo ();
 long *whats_frozen (struct double_histo_list *histo);
 
-int print_all_histo (int flag);
-int print_histo (struct double_histo_list *phisto, char *titolo, int flag);
-void print_all_histo_definition ();
-void print_histo_definition (struct double_histo_list *phisto, char *title);
-
 int clear_all_histo ();
 int clear_histo (struct double_histo_list *phisto);
 
-int add_adx (int idx, struct in_addr *adx, int dir, int bytes);
-int print_adx (int idx, double delta);
-
-//    struct dhisto *create_dhisto (double min, double max, double bin_size);
-//    struct dhisto *create_dhisto2 (double min, double max, int num_col);
-//    int add_dhisto (struct dhisto *phisto, double val);
-//    int print_dhisto (struct dhisto *phisto, char *titolo, char *labels);
-//    int print_text_histo (struct double_histo_list *phisto, char *titolo, char *labels);
-//    struct histo *create_vhisto (char *formato);
-
+void flush_histo ();
 
 
 
@@ -176,10 +117,6 @@ void fake_histo_bitrate_update (struct double_histo_list *phisto,
 extern struct double_histo_list *ip_bitrate_in;
 extern struct double_histo_list *ip_bitrate_out;
 extern struct double_histo_list *ip_bitrate_loc;
-extern struct double_histo_list *ip_bitrate_c_in;
-extern struct double_histo_list *ip_bitrate_c_out;
-extern struct double_histo_list *ip_bitrate_nc_in;
-extern struct double_histo_list *ip_bitrate_nc_out;
 
 
 extern struct double_histo_list *ip_protocol_in;
@@ -199,7 +136,6 @@ extern struct double_histo_list *ip_tos_in;
 extern struct double_histo_list *ip_tos_loc;
 
 //IPv6 module
-#ifdef SUPPORT_IPV6
 
 extern struct double_histo_list *ip6_protocol_in;
 extern struct double_histo_list *ip6_hop_limit_in;
@@ -217,7 +153,6 @@ extern struct double_histo_list *ip6_plen_loc;
 extern struct double_histo_list *icmpv6_type_in;
 extern struct double_histo_list *icmpv6_type_loc;
 extern struct double_histo_list *icmpv6_type_out;
-#endif
 //IPv6 module
 
 
@@ -238,10 +173,6 @@ extern struct double_histo_list *tcp_port_syndst_loc;
 extern struct double_histo_list *tcp_bitrate_in;
 extern struct double_histo_list *tcp_bitrate_out;
 extern struct double_histo_list *tcp_bitrate_loc;
-extern struct double_histo_list *tcp_bitrate_c_in;
-extern struct double_histo_list *tcp_bitrate_c_out;
-extern struct double_histo_list *tcp_bitrate_nc_in;
-extern struct double_histo_list *tcp_bitrate_nc_out;
 
 extern struct double_histo_list *tcp_opts_SACK;
 extern struct double_histo_list *tcp_opts_WS;
@@ -289,10 +220,6 @@ extern struct double_histo_list *tcp_rtt_avg_loc;
 extern struct double_histo_list *tcp_rtt_avg_c2s;
 extern struct double_histo_list *tcp_rtt_avg_s2c;
 
-extern struct double_histo_list *tcp_rtt_c_avg_out;
-extern struct double_histo_list *tcp_rtt_c_avg_in;
-extern struct double_histo_list *tcp_rtt_nc_avg_out;
-extern struct double_histo_list *tcp_rtt_nc_avg_in;
 
 /* v.1.2.0 -----------------------------------*/
 
@@ -375,10 +302,6 @@ extern struct double_histo_list *tcp_thru_s2c;
 
 extern struct double_histo_list *tcp_thru_lf_c2s;
 extern struct double_histo_list *tcp_thru_lf_s2c;
-extern struct double_histo_list *tcp_thru_lf_c_c2s;
-extern struct double_histo_list *tcp_thru_lf_c_s2c;
-extern struct double_histo_list *tcp_thru_lf_nc_c2s;
-extern struct double_histo_list *tcp_thru_lf_nc_s2c;
 
 extern struct double_histo_list *tcp_interrupted;
 
@@ -407,10 +330,6 @@ extern struct double_histo_list *udp_port_flow_dst;
 extern struct double_histo_list *udp_bitrate_in;
 extern struct double_histo_list *udp_bitrate_out;
 extern struct double_histo_list *udp_bitrate_loc;
-extern struct double_histo_list *udp_bitrate_c_in;
-extern struct double_histo_list *udp_bitrate_c_out;
-extern struct double_histo_list *udp_bitrate_nc_in;
-extern struct double_histo_list *udp_bitrate_nc_out;
 
       /* stream histograms */
 
@@ -534,84 +453,17 @@ extern struct double_histo_list *rtcp_rtt_out;
 extern struct double_histo_list *rtcp_rtt_loc;
 
 /* global bitrate */
-extern struct double_histo_list *g_tcp_bitrate_in;
-extern struct double_histo_list *g_tcp_bitrate_loc;
-extern struct double_histo_list *g_tcp_bitrate_out;
-extern struct double_histo_list *g_udp_bitrate_in;
-extern struct double_histo_list *g_udp_bitrate_loc;
-extern struct double_histo_list *g_udp_bitrate_out;
-extern struct double_histo_list *g_icmp_bitrate_in;
-extern struct double_histo_list *g_icmp_bitrate_loc;
-extern struct double_histo_list *g_icmp_bitrate_out;
-extern struct double_histo_list *g_other_bitrate_in;
-extern struct double_histo_list *g_other_bitrate_loc;
-extern struct double_histo_list *g_other_bitrate_out;
 
 /* Application stat */
 
 extern struct double_histo_list *L7_TCP_num_out;
 extern struct double_histo_list *L7_TCP_num_in;
 extern struct double_histo_list *L7_TCP_num_loc;
-extern struct double_histo_list *L7_TCP_num_c_out;
-extern struct double_histo_list *L7_TCP_num_c_in;
-extern struct double_histo_list *L7_TCP_num_nc_out;
-extern struct double_histo_list *L7_TCP_num_nc_in;
 
 extern struct double_histo_list *L7_UDP_num_out;
 extern struct double_histo_list *L7_UDP_num_in;
 extern struct double_histo_list *L7_UDP_num_loc;
-extern struct double_histo_list *L7_UDP_num_c_out;
-extern struct double_histo_list *L7_UDP_num_c_in;
-extern struct double_histo_list *L7_UDP_num_nc_out;
-extern struct double_histo_list *L7_UDP_num_nc_in;
 
-extern struct double_histo_list *L7_HTTP_num_out;
-extern struct double_histo_list *L7_HTTP_num_in;
-extern struct double_histo_list *L7_HTTP_num_loc;
-extern struct double_histo_list *L7_HTTP_num_c_out;
-extern struct double_histo_list *L7_HTTP_num_c_in;
-extern struct double_histo_list *L7_HTTP_num_nc_out;
-extern struct double_histo_list *L7_HTTP_num_nc_in;
-
-extern struct double_histo_list *http_bitrate_out;
-extern struct double_histo_list *http_bitrate_in;
-extern struct double_histo_list *http_bitrate_loc;
-extern struct double_histo_list *http_bitrate_c_out;
-extern struct double_histo_list *http_bitrate_c_in;
-extern struct double_histo_list *http_bitrate_nc_out;
-extern struct double_histo_list *http_bitrate_nc_in;
-
-extern struct double_histo_list *L7_WEB_num_out;
-extern struct double_histo_list *L7_WEB_num_in;
-extern struct double_histo_list *L7_WEB_num_loc;
-
-extern struct double_histo_list *web_bitrate_out;
-extern struct double_histo_list *web_bitrate_in;
-extern struct double_histo_list *web_bitrate_loc;
-
-extern struct double_histo_list *L7_TLS_num_out;
-extern struct double_histo_list *L7_TLS_num_in;
-extern struct double_histo_list *L7_TLS_num_loc;
-
-extern struct double_histo_list *tls_bitrate_out;
-extern struct double_histo_list *tls_bitrate_in;
-extern struct double_histo_list *tls_bitrate_loc;
-
-extern struct double_histo_list *L7_VIDEO_num_out;
-extern struct double_histo_list *L7_VIDEO_num_in;
-extern struct double_histo_list *L7_VIDEO_num_loc;
-extern struct double_histo_list *L7_VIDEO_num_c_out;
-extern struct double_histo_list *L7_VIDEO_num_c_in;
-extern struct double_histo_list *L7_VIDEO_num_nc_out;
-extern struct double_histo_list *L7_VIDEO_num_nc_in;
-
-extern struct double_histo_list *video_rate_out;
-extern struct double_histo_list *video_rate_in;
-extern struct double_histo_list *video_rate_loc;
-extern struct double_histo_list *video_rate_c_out;
-extern struct double_histo_list *video_rate_c_in;
-extern struct double_histo_list *video_rate_nc_out;
-extern struct double_histo_list *video_rate_nc_in;
 
 /* IPv4/IPv6 statistics */
 extern struct double_histo_list *L3_protocol_out;
@@ -621,42 +473,5 @@ extern struct double_histo_list *L3_bitrate_out;
 extern struct double_histo_list *L3_bitrate_in;
 extern struct double_histo_list *L3_bitrate_loc;
 
-/* profiling */
-#define PROFILE_CPU_MAX 1
-#define PROFILE_CPU_USR 2
-#define PROFILE_CPU_SYS 3
-#define PROFILE_CPU_TOT 4
-extern struct double_histo_list *profile_cpu;
-extern struct double_histo_list *profile_flows;
-extern struct double_histo_list *profile_tcpdata;
-extern win_stat ave_win_usr_cpu;
-extern win_stat ave_win_sys_cpu;
-extern double max_cpu;
-#define PROFILE_FLOWS_MISSED_UDP 1
-#define PROFILE_FLOWS_ACTIVE_UDP 2
-#define PROFILE_FLOWS_MISSED_TCP 3
-#define PROFILE_FLOWS_ACTIVE_TCP 4
-#define PROFILE_FLOWS_TOT 5
-extern win_stat active_flows_win_TCP;
-extern win_stat active_flows_win_UDP;
-extern win_stat missed_flows_win_TCP;
-extern win_stat missed_flows_win_UDP;
-#define PROFILE_TCPDATA_RECEIVED 1
-#define PROFILE_TCPDATA_MISSED 2
-#define PROFILE_TCPDATA_TOT 3
-extern double tcpdata_received_total;
-extern double tcpdata_missed_total;
 
-extern struct double_histo_list *profile_trash;
-
-/* Chat stat */
-
-#define MSN_CHAT_HISTO 1
-#define MSN_PRESENCE_HISTO 2
-#define JABBER_CHAT_HISTO 3
-#define JABBER_PRESENCE_HISTO 4
-#define YMSG_CHAT_HISTO 5
-#define YMSG_PRESENCE_HISTO 6
-#define MAX_CHAT_FLOW_NUM 7
-extern struct double_histo_list *chat_flow_num;
 #endif

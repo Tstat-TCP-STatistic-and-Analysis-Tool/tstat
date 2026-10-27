@@ -16,11 +16,17 @@
  *
 */
 #include "tstat.h"
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
 #include "globals.h"
+#include "options.h"
+
+/* Parameters of removed features, accepted and ignored for compatibility
+   with older configuration files */
+static char *obsolete_global_params[] = {
+  "entropy_sample", "entropy_threshold", "rate_sampling",
+  "dns_cache_size_ipv4_dns6", "dns_cache_size_ipv6_dns4", "max_cloud_hosts",
+  "max_adx_slots",
+  NULL
+};
 
 /*
   GLOBALS is a global struct containing mirroring the constants defined in param.h
@@ -29,13 +35,12 @@
 */
 void InitGlobals (void)
 {
-  GLOBALS.Max_ADX_Slots         = MAX_ADX_SLOTS;
 
   GLOBALS.Max_Internal_Ethers   = MAX_INTERNAL_ETHERS;
   GLOBALS.Max_Internal_Hosts    = MAX_INTERNAL_HOSTS;
-  GLOBALS.Max_Cloud_Hosts       = MAX_CLOUD_HOSTS;
   GLOBALS.Max_Crypto_Hosts      = MAX_CRYPTO_HOSTS;
   GLOBALS.Max_White_Hosts       = MAX_WHITE_HOSTS;
+  GLOBALS.Max_Crypto_Cache_Size = MAX_CRYPTO_CACHE_SIZE;
 
   GLOBALS.Max_Seg_Per_Quad      = MAX_SEG_PER_QUAD;
 
@@ -67,28 +72,17 @@ void InitGlobals (void)
   GLOBALS.Min_Delta_T_UDP_Dup_Pkt = MIN_DELTA_T_UDP_DUP_PKT;
   GLOBALS.Min_Delta_T_TCP_Dup_Pkt = MIN_DELTA_T_TCP_DUP_PKT;
 
-  GLOBALS.Entropy_Sample        = ENTROPY_SAMPLE;
-  GLOBALS.Entropy_Threshold     = ENTROPY_THRESHOLD;
 
-  GLOBALS.Rate_Sampling         = RATE_SAMPLING;
 
-#ifdef LOG_PERIODIC  
   GLOBALS.Log_Periodic_Interval = LOG_PERIODIC_INTERVAL;
-#endif
   
   GLOBALS.DNS_Cache_Size        = DNS_CACHE_SIZE;
-#ifdef SUPPORT_IPV6
   GLOBALS.DNS_Cache_Size_IPv6   = DNS_CACHE_SIZE_IPV6;
-#ifdef SUPPORT_MIXED_DNS  
-  GLOBALS.DNS_Cache_Size_IPv4_DNS6   = DNS_CACHE_SIZE_IPV4_DNS6;
-  GLOBALS.DNS_Cache_Size_IPv6_DNS4   = DNS_CACHE_SIZE_IPV6_DNS4;
-#endif
 
   GLOBALS.Crypto_IPv6_Mask_0    = CRYPTO_IPV6_MASK_0;
   GLOBALS.Crypto_IPv6_Mask_1    = CRYPTO_IPV6_MASK_1;
   GLOBALS.Crypto_IPv6_Mask_2    = CRYPTO_IPV6_MASK_2;
   GLOBALS.Crypto_IPv6_Mask_3    = CRYPTO_IPV6_MASK_3;
-#endif
 }
 
 void PrintGlobals (void)
@@ -110,41 +104,28 @@ void PrintGlobals (void)
   fprintf (fp_stdout,"\tGC_Cycle_Time = %f\n",GLOBALS.GC_Cycle_Time*1.0/1000000.0);
   fprintf (fp_stdout,"\tGC_Split_Ratio = %d\n",GLOBALS.GC_Split_Ratio);
 
-  fprintf (fp_stdout,"\tMax_ADX_Slots = %d\n",GLOBALS.Max_ADX_Slots);
   fprintf (fp_stdout,"\tMax_Internal_Ethers = %d\n",GLOBALS.Max_Internal_Ethers);
   fprintf (fp_stdout,"\tMax_Internal_Hosts = %d\n",GLOBALS.Max_Internal_Hosts);
-  fprintf (fp_stdout,"\tMax_Cloud_Hosts = %d\n",GLOBALS.Max_Cloud_Hosts);
   fprintf (fp_stdout,"\tMax_Crypto_Hosts = %d\n",GLOBALS.Max_Crypto_Hosts);
   fprintf (fp_stdout,"\tMax_White_Hosts = %d\n",GLOBALS.Max_White_Hosts);
   fprintf (fp_stdout,"\tMax_Crypto_Cache_Size = %d\n",GLOBALS.Max_Crypto_Cache_Size);
   fprintf (fp_stdout,"\tDNS_Cache_Size = %d\n",GLOBALS.DNS_Cache_Size);
-#ifdef SUPPORT_IPV6
   fprintf (fp_stdout,"\tDNS_Cache_Size_IPv6 = %d\n",GLOBALS.DNS_Cache_Size_IPv6);
-#ifdef SUPPORT_MIXED_DNS  
-  fprintf (fp_stdout,"\tDNS_Cache_Size_IPv4_DNS6 = %d\n",GLOBALS.DNS_Cache_Size_IPv4_DNS6);
-  fprintf (fp_stdout,"\tDNS_Cache_Size_IPv6_DNS4 = %d\n",GLOBALS.DNS_Cache_Size_IPv6_DNS4);
-#endif
   
   fprintf (fp_stdout,"\tCrypto_IPv6_Mask_0 = 0x%08x\n",GLOBALS.Crypto_IPv6_Mask_0);
   fprintf (fp_stdout,"\tCrypto_IPv6_Mask_1 = 0x%08x\n",GLOBALS.Crypto_IPv6_Mask_1);
   fprintf (fp_stdout,"\tCrypto_IPv6_Mask_2 = 0x%08x\n",GLOBALS.Crypto_IPv6_Mask_2);
   fprintf (fp_stdout,"\tCrypto_IPv6_Mask_3 = 0x%08x\n",GLOBALS.Crypto_IPv6_Mask_3);
-#endif
 
   fprintf (fp_stdout,"\tRuntime_Config_Idle = %f\n",GLOBALS.Runtime_Config_Idle);
   fprintf (fp_stdout,"\tRuntime_Mtime_Counter = %d\n",GLOBALS.Runtime_Mtime_Counter);
   fprintf (fp_stdout,"\tMax_Time_Step = %f\n",GLOBALS.Max_Time_Step/1000000.0);
   fprintf (fp_stdout,"\tDirs = %d\n",GLOBALS.Dirs);
-  fprintf (fp_stdout,"\tRate_Sampling = %f\n",GLOBALS.Rate_Sampling*1.0/1000000.0);
   
-#ifdef LOG_PERIODIC  
   fprintf (fp_stdout,"\tLog_Periodic_Interval = %f\n",GLOBALS.Log_Periodic_Interval*1.0/1000000.0);
-#endif
   
   fprintf (fp_stdout,"\tMax_Seg_Per_Quad = %d\n",GLOBALS.Max_Seg_Per_Quad);
   fprintf (fp_stdout,"\tList_Search_Dept = %d\n",GLOBALS.List_Search_Dept);
-  fprintf (fp_stdout,"\tEntropy_Sample = %d\n",GLOBALS.Entropy_Sample);
-  fprintf (fp_stdout,"\tEntropy_Threshold = %f\n",GLOBALS.Entropy_Threshold);
   fprintf (fp_stdout,"\tMin_Delta_T_UDP_Dup_Pkt = %f\n",GLOBALS.Min_Delta_T_UDP_Dup_Pkt);
   fprintf (fp_stdout,"\tMin_Delta_T_TCP_Dup_Pkt = %f\n",GLOBALS.Min_Delta_T_TCP_Dup_Pkt);
 
@@ -155,9 +136,6 @@ void InitGlobalArrays (void)
   extern struct in_addr *internal_net_list;
   extern int *internal_net_mask;
 
-  extern struct in_addr *cloud_net_list;
-  extern int *cloud_net_mask;
-
   extern struct in_addr *crypto_net_list;
   extern int *crypto_net_mask;
 
@@ -167,9 +145,6 @@ void InitGlobalArrays (void)
 
   extern struct in6_addr *internal_net_listv6;
   extern int *internal_net_maskv6;
-  
-  extern struct in6_addr *cloud_net_listv6;
-  extern int *cloud_net_maskv6;
   
   extern struct in6_addr *crypto_net_listv6;
   extern int *crypto_net_maskv6;
@@ -188,9 +163,6 @@ void InitGlobalArrays (void)
   internal_net_list  = (struct in_addr *) MallocZ (GLOBALS.Max_Internal_Hosts * sizeof (struct in_addr));
   internal_net_mask  = (int *) MallocZ (GLOBALS.Max_Internal_Hosts * sizeof (int));
 
-  cloud_net_list  = (struct in_addr *) MallocZ (GLOBALS.Max_Cloud_Hosts * sizeof (struct in_addr));
-  cloud_net_mask  = (int *) MallocZ (GLOBALS.Max_Cloud_Hosts * sizeof (int));
-  
   crypto_net_list  = (struct in_addr *) MallocZ (GLOBALS.Max_Crypto_Hosts * sizeof (struct in_addr));
   crypto_net_mask  = (int *) MallocZ (GLOBALS.Max_Crypto_Hosts * sizeof (int));
 
@@ -206,9 +178,6 @@ void InitGlobalArrays (void)
   // IPv6 Address structures, even if unused 
   internal_net_listv6 = (struct in6_addr *) MallocZ (GLOBALS.Max_Internal_Hosts * sizeof (struct in6_addr));
   internal_net_maskv6 = (int *) MallocZ (GLOBALS.Max_Internal_Hosts * sizeof (int));
-
-  cloud_net_listv6 = (struct in6_addr *) MallocZ (GLOBALS.Max_Cloud_Hosts * sizeof (struct in6_addr));
-  cloud_net_maskv6 = (int *) MallocZ (GLOBALS.Max_Cloud_Hosts * sizeof (int));
 
   crypto_net_listv6 = (struct in6_addr *) MallocZ (GLOBALS.Max_Crypto_Hosts * sizeof (struct in6_addr));
   crypto_net_maskv6 = (int *) MallocZ (GLOBALS.Max_Crypto_Hosts * sizeof (int));
@@ -312,16 +281,7 @@ void croak_global_double(char *param_name)
 
 void globals_parse_ini_arg(char *param_name, param_value param_value)
 {
-    if (strcasecmp(param_name,"max_adx_slots") == 0) 
-     {
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.Max_ADX_Slots = param_value.value.ivalue;
-        }
-       else
-	 croak_global_integer(param_name);
-     }
-    else if (strcasecmp(param_name,"max_internal_ethers") == 0) 
+    if (strcasecmp(param_name,"max_internal_ethers") == 0) 
      {
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
         {
@@ -335,15 +295,6 @@ void globals_parse_ini_arg(char *param_name, param_value param_value)
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
         {
 	  GLOBALS.Max_Internal_Hosts = param_value.value.ivalue;
-        }
-       else
-	 croak_global_integer(param_name);
-     }
-    else if (strcasecmp(param_name,"max_cloud_hosts") == 0) 
-     {
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.Max_Cloud_Hosts = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
@@ -554,44 +505,6 @@ void globals_parse_ini_arg(char *param_name, param_value param_value)
        else
 	 croak_global_double(param_name);
      }
-    else if (strcasecmp(param_name,"entropy_sample") == 0) 
-     {
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.Entropy_Sample = param_value.value.ivalue;
-        }
-       else
-	 croak_global_integer(param_name);
-     }
-    else if (strcasecmp(param_name,"entropy_threshold") == 0) 
-     {
-       if (param_value.type == DOUBLE && param_value.value.dvalue > 0.0) 
-        {
-          if ( param_value.value.dvalue <= 4.0 )
-	    GLOBALS.Entropy_Threshold = param_value.value.dvalue;
-	  else
-	  {
-            fprintf(fp_stderr, "globals conf: warning: '%s' must be smaller than 4.0. Using default value %f\n",
-                param_name, GLOBALS.Entropy_Threshold );
-	  }
-	}
-       else
-	 croak_global_double(param_name);
-     }
-    else if (strcasecmp(param_name,"rate_sampling") == 0) 
-     {
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.Rate_Sampling = param_value.value.ivalue * 1000000;
-        }
-       else if (param_value.type == DOUBLE && param_value.value.dvalue > 0.0) 
-        {
-	  GLOBALS.Rate_Sampling = (int) (param_value.value.dvalue * 1000000.0);
-        }
-       else
-	 croak_global_double(param_name);
-     }
-#ifdef LOG_PERIODIC     
     else if (strcasecmp(param_name,"log_periodic_interval") == 0) 
      {
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
@@ -605,7 +518,6 @@ void globals_parse_ini_arg(char *param_name, param_value param_value)
        else
 	 croak_global_double(param_name);
      }
-#endif     
     else if (strcasecmp(param_name,"max_crypto_cache_size") == 0) 
      {
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
@@ -631,82 +543,50 @@ void globals_parse_ini_arg(char *param_name, param_value param_value)
      */
     else if (strcasecmp(param_name,"dns_cache_size_ipv6") == 0) 
      {
-#if defined(SUPPORT_IPV6)     
        if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
         {
 	  GLOBALS.DNS_Cache_Size_IPv6 = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
-#endif     
-     }
-    else if (strcasecmp(param_name,"dns_cache_size_ipv4_dns6") == 0) 
-     {
-#if defined(SUPPORT_IPV6) && defined(SUPPORT_MIXED_DNS)
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.DNS_Cache_Size_IPv4_DNS6 = param_value.value.ivalue;
-        }
-       else
-	 croak_global_integer(param_name);
-#endif
-     }
-    else if (strcasecmp(param_name,"dns_cache_size_ipv6_dns4") == 0) 
-     {
-#if defined(SUPPORT_IPV6) && defined(SUPPORT_MIXED_DNS)
-       if (param_value.type == INTEGER && param_value.value.ivalue > 0) 
-        {
-	  GLOBALS.DNS_Cache_Size_IPv6_DNS4 = param_value.value.ivalue;
-        }
-       else
-	 croak_global_integer(param_name);
-#endif
      }
     else if (strcasecmp(param_name,"crypto_ipv6_mask_0") == 0) 
      {
-#if defined(SUPPORT_IPV6)     
        if (param_value.type == INTEGER) 
         {
 	  GLOBALS.Crypto_IPv6_Mask_0 = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
-#endif
      }
     else if (strcasecmp(param_name,"crypto_ipv6_mask_1") == 0) 
      {
-#if defined(SUPPORT_IPV6)     
        if (param_value.type == INTEGER) 
         {
 	  GLOBALS.Crypto_IPv6_Mask_1 = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
-#endif
      }
     else if (strcasecmp(param_name,"crypto_ipv6_mask_2") == 0) 
      {
-#if defined(SUPPORT_IPV6)     
        if (param_value.type == INTEGER) 
         {
 	  GLOBALS.Crypto_IPv6_Mask_2 = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
-#endif
      }
     else if (strcasecmp(param_name,"crypto_ipv6_mask_3") == 0) 
      {
-#if defined(SUPPORT_IPV6)     
        if (param_value.type == INTEGER) 
         {
 	  GLOBALS.Crypto_IPv6_Mask_3 = param_value.value.ivalue;
         }
        else
 	 croak_global_integer(param_name);
-#endif
      }
-    else {
+    else if (!is_obsolete_param(param_name, obsolete_global_params)) {
         fprintf(fp_stderr, "global conf: '%s' - unknown keyword\n", param_name);
         exit(1);
     }

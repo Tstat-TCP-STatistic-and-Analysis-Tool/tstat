@@ -16,17 +16,9 @@
  *
 */
 #include "tstat.h"
-#include "dump.h"
 #include "tcpdump.h"
 #include <pcap.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <sys/stat.h>
-#include <time.h>
-#include "p2p.h"
-#include "names.h"
+#include "options.h"
 
 /* Note: 
  * is NOT possible to use libpcap writing functions because 
@@ -62,7 +54,6 @@ enum dump_proto_index{
     */
     DUMP_IP_COMPLETE = LAST_UDP_PROTOCOL,
     DUMP_UDP_COMPLETE,
-    DUMP_TCP_VIDEOSTREAMING,
     DUMP_TCP_COMPLETE,
     DUMP_UDP_STUN,
     DUMP_PROTOS
@@ -91,7 +82,16 @@ extern char *dns_namefilter_file;
 extern Bool dns_namefilter_specified;
 
 Bool dump_engine = FALSE;
-extern Bool zlib_dump;
+
+/* Dump of removed protocols, accepted and ignored for compatibility
+   with older configuration files */
+static char *obsolete_dump_params[] = {
+  "udp_edk", "udp_kad", "udp_kadu", "udp_okad", "udp_gnutella",
+  "udp_bittorrent", "udp_utp", "udp_dc", "udp_kazaa", "udp_pplive",
+  "udp_sopcast", "udp_tvants", "udp_ppstream", "udp_teredo", "udp_vod",
+  "udp_sip", "udp_sye", "tcp_videostreaming",
+  NULL
+};
 
 int search_dump_file(char *protoname, struct dump_file *proto2dump) {
     int i = 0;
@@ -114,38 +114,18 @@ FILE * new_dump_file(struct dump_file *dump_file) {
     * slice_window 1  :   udp_XXX"%02d".pcap  try to have ordered list of files
     * slice_window 2  :   udp_XXX"%d".pcap    
     */
-#ifdef HAVE_ZLIB
-    if (zlib_dump)
-     {
-       if (slice_win != 0) {
-           if (dump_file->seq_num < 100)
-               fname = sprintf_safe("%s/%s%02d.pcap.gz", outdir, 
-        	   dump_file->protoname, dump_file->seq_num);	  
-           else
-               fname = sprintf_safe("%s/%s%d.pcap.gz", outdir, 
-        	   dump_file->protoname, dump_file->seq_num);	  
-       }
-       else
-           fname = sprintf_safe("%s/%s.pcap.gz", outdir, dump_file->protoname);  
-
-       fp = gzopen(fname, "w");
-      }
+    if (slice_win != 0) {
+        if (dump_file->seq_num < 100)
+            fname = sprintf_safe("%s/%s%02d.pcap", outdir,
+                dump_file->protoname, dump_file->seq_num);
+        else
+            fname = sprintf_safe("%s/%s%d.pcap", outdir,
+                dump_file->protoname, dump_file->seq_num);
+    }
     else
-#endif
-     {
-       if (slice_win != 0) {
-           if (dump_file->seq_num < 100)
-               fname = sprintf_safe("%s/%s%02d.pcap", outdir, 
-        	   dump_file->protoname, dump_file->seq_num);	  
-           else
-               fname = sprintf_safe("%s/%s%d.pcap", outdir, 
-        	   dump_file->protoname, dump_file->seq_num);	  
-       }
-       else
-           fname = sprintf_safe("%s/%s.pcap", outdir, dump_file->protoname);  
+        fname = sprintf_safe("%s/%s.pcap", outdir, dump_file->protoname);
 
-       fp = fopen(fname, "w");
-      }
+    fp = fopen(fname, "w");
     
     if (fp == NULL) {
         fprintf(fp_stderr, "dump engine: unable to create '%s'\n", fname);
@@ -161,16 +141,7 @@ FILE * new_dump_file(struct dump_file *dump_file) {
     hdr.snaplen = 1000000;	        /* fake info */
     hdr.linktype = PCAP_DLT_EN10MB;	/* always Ethernet (10Mb) */
     hdr.sigfigs = 0;                /* fake info */
-#ifdef HAVE_ZLIB
-    if (zlib_dump)
-     { 
-       gzwrite(fp,(char *) &hdr, sizeof(hdr));
-     }
-    else 
-#endif
-     {   
-       fwrite((char *) &hdr, sizeof(hdr), 1, fp);
-     }
+    fwrite((char *) &hdr, sizeof(hdr), 1, fp);
     return fp; 
 }
 
@@ -271,7 +242,6 @@ void dump_parse_ini_arg(char *param_name, param_value param_value) {
         }
     }
     else if (strcmp(param_name, "dns_filter") == 0) {
-#ifdef DNS_CACHE_PROCESSOR
         if (param_value.value.ivalue > 0) 
          {
            if (!dns_namefilter_specified)
@@ -282,9 +252,8 @@ void dump_parse_ini_arg(char *param_name, param_value param_value) {
          }
         else
            enable_DNSfilter(FALSE);
-#endif
     }
-    else {
+    else if (!is_obsolete_param(param_name, obsolete_dump_params)) {
         fprintf(fp_stderr, "dump engine err: '%s' - not valid command \n", param_name);
         exit(1);
     }
@@ -301,7 +270,6 @@ void dump_init(void) {
     tcp_maxbytes = 0;
     udp_maxbytes = 0;
     stop_dumping_mask = 0;
-#ifdef DNS_CACHE_PROCESSOR
     if (dns_namefilter_specified)
      {
        if(!init_DNSfilter(dns_namefilter_file, TRUE)) 
@@ -311,7 +279,6 @@ void dump_init(void) {
         }
      }   
     else
-#endif
      {
        init_DNSfilter("", FALSE);
      }
@@ -327,32 +294,14 @@ void dump_init(void) {
     dump_reset_dump_file(proto2dump, UDP_UNKNOWN, "udp_unknown");
     dump_reset_dump_file(proto2dump, RTP, "udp_rtp");
     dump_reset_dump_file(proto2dump, RTCP, "udp_rtcp");
-    dump_reset_dump_file(proto2dump, P2P_EDK, "udp_edk");
-    dump_reset_dump_file(proto2dump, P2P_KAD, "udp_kad");
-    dump_reset_dump_file(proto2dump, P2P_KADU, "udp_kadu");
-    dump_reset_dump_file(proto2dump, P2P_OKAD, "udp_okad");
-    dump_reset_dump_file(proto2dump, P2P_GNU, "udp_gnutella");
-    dump_reset_dump_file(proto2dump, P2P_BT, "udp_bittorrent");
-    dump_reset_dump_file(proto2dump, P2P_DC, "udp_dc");
-    dump_reset_dump_file(proto2dump, P2P_KAZAA, "udp_kazaa");
-    dump_reset_dump_file(proto2dump, P2P_PPLIVE, "udp_pplive");
-    dump_reset_dump_file(proto2dump, P2P_SOPCAST, "udp_sopcast");
-    dump_reset_dump_file(proto2dump, P2P_TVANTS, "udp_tvants");
     dump_reset_dump_file(proto2dump, DNS, "udp_dns");
-    dump_reset_dump_file(proto2dump, P2P_UTP, "udp_utp");
-    dump_reset_dump_file(proto2dump, UDP_VOD, "udp_vod");
-    dump_reset_dump_file(proto2dump, P2P_PPSTREAM, "udp_ppstream");
-    dump_reset_dump_file(proto2dump, TEREDO, "udp_teredo");
-    dump_reset_dump_file(proto2dump, UDP_SIP, "udp_sip");
     dump_reset_dump_file(proto2dump, UDP_DTLS, "udp_dtls");
     dump_reset_dump_file(proto2dump, UDP_QUIC, "udp_quic");
     dump_reset_dump_file(proto2dump, DUMP_IP_COMPLETE, "ip_complete");
     dump_reset_dump_file(proto2dump, DUMP_UDP_COMPLETE, "udp_complete");
-    dump_reset_dump_file(proto2dump, DUMP_TCP_VIDEOSTREAMING, "tcp_videostreaming");
     dump_reset_dump_file(proto2dump, DUMP_TCP_COMPLETE, "tcp_complete");
     dump_reset_dump_file(proto2dump, DUMP_UDP_STUN, "udp_stun");
     dump_reset_dump_file(proto2dump, UDP_MTURN, "udp_mturn");
-    dump_reset_dump_file(proto2dump, UDP_SYE, "udp_sye");
 }
 
 /*
@@ -405,16 +354,7 @@ void dump_packet(FILE *fp,
       // gethdrlength computes the overall headers, but is not what we need here
       phdr.len = sizeof(struct ether_header) + ntohs (PIP_LEN (pip)) + 40; // gethdrlength(pip,plast);
       
-#ifdef HAVE_ZLIB
-    if (zlib_dump)
-     { 
-       gzwrite(fp,&phdr, sizeof(struct pcap_sf_pkthdr));
-     }
-    else 
-#endif
-     {   
-       fwrite(&phdr, sizeof(struct pcap_sf_pkthdr), 1, fp);
-     }
+    fwrite(&phdr, sizeof(struct pcap_sf_pkthdr), 1, fp);
 
     // write a (bogus) ethernet header
     memset(&eth_header, 0, sizeof(struct ether_header));
@@ -423,22 +363,10 @@ void dump_packet(FILE *fp,
     else
       eth_header.ether_type = htons (ETHERTYPE_IPV6);
       
-#ifdef HAVE_ZLIB
-    if (zlib_dump)
-     { 
-       gzwrite (fp,&eth_header, sizeof(struct ether_header));
+    fwrite (&eth_header, sizeof(struct ether_header), 1, fp);
 
-       // write the IP/TCP parts
-       gzwrite(fp,pip, phdr.caplen - sizeof(struct ether_header));
-     }
-    else 
-#endif
-     {   
-       fwrite (&eth_header, sizeof(struct ether_header), 1, fp);
-
-       // write the IP/TCP parts
-       fwrite(pip, phdr.caplen - sizeof(struct ether_header), 1, fp);
-     }
+    // write the IP/TCP parts
+    fwrite(pip, phdr.caplen - sizeof(struct ether_header), 1, fp);
 }
 
 void dump_to_file(struct dump_file *dump_file, 
@@ -456,17 +384,8 @@ void dump_to_file(struct dump_file *dump_file,
         //check if current dump window is ended
         double diff = elapsed(dump_file->win_start, current_time) / 1000000;
         if (diff >= slice_win) {
-#ifdef HAVE_ZLIB
-	    if (zlib_dump)
-             { 
-               gzclose(dump_file->fp);
-	     }
-	    else
-#endif
-             { 
-	       fflush(dump_file->fp);
-               fclose(dump_file->fp);
-	     }
+            fflush(dump_file->fp);
+            fclose(dump_file->fp);
             dump_file->seq_num++;
 
             // compute the current timestamp of dumping window
@@ -585,16 +504,6 @@ void dump_flow_stat (struct ip *pip,
             } /* end !stop_dumping_tcp */
         } /* end DUMP_TCP_COMPLETE */
 
-#ifdef STREAMING_CLASSIFIER
-        if (proto2dump[DUMP_TCP_VIDEOSTREAMING].enabled && ((tcb*)pdir)->ptp != NULL)
-         {
-            struct stcp_pair *p = ((tcb *)pdir)->ptp;
-            if (p->streaming.video_content_type || p->streaming.video_payload_type)
-             {
-               dump_to_file(&proto2dump[DUMP_TCP_VIDEOSTREAMING], pip, plast);
-             }
-         }
-#endif
      }
     
     /***** UDP packets *****/
@@ -603,27 +512,10 @@ void dump_flow_stat (struct ip *pip,
         ucb *mydir = (ucb*)pdir;
         ucb *otherdir = (dir == C2S) ? &(mydir->pup->s2c) : &(mydir->pup->c2s);
 
-        //specific controls to find kad obfuscated...
-        ucb_type = UDP_p2p_to_logtype(mydir);
+        ucb_type = mydir->type;
 
-        /* dump to a specific DPI file */
-        if (proto2dump[P2P_UTP].enabled)
-         {
-            /* 
-               Since uTP classification is behavioral, we dump both already classified datagrams,
-               and datagrams which are not classified, but that are already in a valid state of 
-               the identification state machine.
-            */
-            if ( ucb_type == P2P_UTP || 
-                 ucb_type == P2P_UTPBT ||
-                 ( (ucb_type==UDP_UNKNOWN || ucb_type==FIRST_RTP_PLUS || ucb_type==FIRST_RTP || ucb_type==FIRST_RTCP || ucb_type==P2P_BT) &&
-                   (mydir->uTP_state > UTP_UNKNOWN )
-                 )
-               )
-             dump_to_file(&proto2dump[P2P_UTP], pip, plast);
-         }
         /* dump STUN INITIATED */
-        else if (proto2dump[DUMP_UDP_STUN].enabled)
+        if (proto2dump[DUMP_UDP_STUN].enabled)
          {
 
            /* Check if it must be classified as a STUN flow */
@@ -650,22 +542,6 @@ void dump_flow_stat (struct ip *pip,
                  )
                )
              dump_to_file(&proto2dump[UDP_QUIC], pip, plast);
-         }
-        /* dump SYE protocol data */
-        else if (proto2dump[UDP_SYE].enabled)
-         {
-            /* 
-               Since SYE classification is behavioral, we dump both already 
-               classified datagrams, and datagrams which are not classified but
-               that are already in a valid state of the identification 
-               state machine.
-            */
-            if ( ucb_type == UDP_SYE || 
-                 ( (ucb_type==UDP_UNKNOWN || ucb_type==FIRST_RTP_PLUS || ucb_type==FIRST_RTP || ucb_type==FIRST_RTCP ) &&
-                   (mydir->SYE_state > SYE_UNKNOWN || otherdir->SYE_state > SYE_UNKNOWN)
-                 )
-               )
-             dump_to_file(&proto2dump[UDP_SYE], pip, plast);
          }
     	else if (proto2dump[ucb_type].enabled) 
     	 {
@@ -716,17 +592,8 @@ void dump_flush(Bool trace_completed) {
     //flush traces files
     for (i = 0; i < DUMP_PROTOS; i++) {
         if (proto2dump[i].enabled && proto2dump[i].fp) {
-#ifdef HAVE_ZLIB
-	    if (zlib_dump)
-             { 
-               gzclose(proto2dump[i].fp);
-	     }
-	    else
-#endif
-             { 
-               fflush(proto2dump[i].fp);
-               fclose(proto2dump[i].fp);
-	     }
+            fflush(proto2dump[i].fp);
+            fclose(proto2dump[i].fp);
             proto2dump[i].fp = NULL;
             proto2dump[i].win_start.tv_sec = -1;
             proto2dump[i].win_start.tv_usec = -1;

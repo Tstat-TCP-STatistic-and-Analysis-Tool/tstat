@@ -95,24 +95,3 @@ extern struct pcap_pkthdr pcap_current_hdr;
 extern unsigned char *pcap_current_buf;
 
 
-#ifdef BY_HAND
-static void
-swap_hdr (struct dump_file_header *pdfh)
-{
-  pdfh->version_major = SWAPSHORT (pdfh->version_major);
-  pdfh->version_minor = SWAPSHORT (pdfh->version_minor);
-  pdfh->thiszone = SWAPLONG (pdfh->thiszone);
-  pdfh->sigfigs = SWAPLONG (pdfh->sigfigs);
-  pdfh->snaplen = SWAPLONG (pdfh->snaplen);
-  pdfh->linktype = SWAPLONG (pdfh->linktype);
-}
-
-static void
-swap_phdr (struct packet_header *pph)
-{
-  pph->caplen = SWAPLONG (pph->caplen);
-  pph->len = SWAPLONG (pph->len);
-  pph->ts_secs = SWAPLONG (pph->ts_secs);
-  pph->ts_usecs = SWAPLONG (pph->ts_usecs);
-}
-#endif /* BY_HAND */

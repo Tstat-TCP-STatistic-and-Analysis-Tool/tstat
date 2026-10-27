@@ -18,77 +18,28 @@
 
 #include "tstat.h"
 #include "tcpL7.h"
-#include "msn.h"
-#include "ymsg.h"
-#include "jabber.h"
-#include "p2p.h"
 
 #include <regex.h>
 
-/* log(2) used in the entropy computation */
-#define LOG2 0.6931471805599453
-
-void compute_nibbles_entropy (tcp_pair *ptp);
 int map_flow_type(tcp_pair *thisflow);
 
 extern struct L4_bitrates L4_bitrate;
 extern struct L7_bitrates L7_bitrate;
 extern struct L7_bitrates L7_udp_bitrate;
-extern struct HTTP_bitrates HTTP_bitrate;
-extern struct WEB_bitrates WEB_bitrate;
-extern struct TLS_bitrates TLS_bitrate;
 
-extern void map_tls_service(tcp_pair *ptp);
-extern void init_tls_patterns();
 extern int verify_long_method(u_int32_t , void *);
 
-#ifdef VIDEO_DETAILS
-extern void init_web_patterns();
-extern void parse_flv_header(tcp_pair *ptp, void *pdata,int data_length);
-
-extern char yt_id[50];
-extern char yt_itag[5];
-extern int yt_seek;
-extern int yt_redir_mode;
-extern int yt_redir_count;
-extern int yt_mobile;
-extern int yt_stream;
-#endif
 
 regex_t re_ssl_subject,re_ssl_clean;
 char cname[80];
 char tls_version_list[80];
 
-enum http_content YTMAP(enum http_content X)
-{
-  switch (X)
-   {
-     case HTTP_YOUTUBE_VIDEO204:
-     case HTTP_YOUTUBE_204:
-       return HTTP_YOUTUBE_VIDEO;
-     case HTTP_YOUTUBE_SITE_DIRECT:
-     case HTTP_YOUTUBE_SITE_EMBED:
-       return HTTP_YOUTUBE_SITE;
-     case HTTP_TWITTER:
-       return HTTP_SOCIAL;
-     case HTTP_DROPBOX:
-       return HTTP_GET;
-     default:
-       return X;      
-   }
-}
-
 void
 tcpL7_init ()
 {
-  /* nothing to do so far */
-#ifdef VIDEO_DETAILS
-   init_web_patterns();
-#endif
    regcomp(&re_ssl_subject,"[A-Za-z0-9]+\\.[A-Za-z0-9]{2,24}\\.?$",REG_EXTENDED);
    regcomp(&re_ssl_clean,"[^[:cntrl:][:space:]]+",REG_EXTENDED);
 
-   init_tls_patterns();
 }
 
 void *
@@ -701,346 +652,6 @@ void rtmp_handshake_check(tcp_pair *ptp, void *pdata, int payload_len, int dir)
   return;
 }
 
-void ed2k_obfuscate_check(tcp_pair *ptp,int payload_len)
-{
-/* Identification of sequences of messages through the packet size
-   information (and only if the packet has the PSH/ACK flags set):
-     11 -> 83 -> 55 => SecureID with key exchange 
-     11 -> 55       => SecureID without key exchange
-     22 -> 18       => Upload queue management
-      6 -> 46	  => Accept-upload/Request Parts
-*/	
-
-  switch(payload_len)
-   {
-     case 11:
-       ptp->state_11=1;
-       break;
-     case 83:
-       if (ptp->state_11==1)
-     	  ptp->state_11_83=1;
-       break;
-     case 55:
-       if (ptp->state_11_83==1)
-     	 { 
-     	   ptp->state_11_83_55=1;
-     	   ptp->con_type |= OBF_PROTOCOL;
-	 }
-       else if (ptp->state_11==1)
-     	 { 
-     	   ptp->state_11_55=1; 
-     	   ptp->con_type |= OBF_PROTOCOL;
-     	 }
-       break;
-
-     case 22:
-       ptp->state_22=1;
-       break;
-     case 18:
-       if (ptp->state_22==1)
-     	 {
-     	   ptp->state_22_18=1;
-     	   ptp->con_type |= OBF_PROTOCOL;
-     	 }  
-       break;
-
-     case 6:
-       ptp->state_6=1;
-       break;
-     case 46:
-       if (ptp->state_6==1)
-     	{
-     	  ptp->state_6_46=1;
-     	  ptp->con_type |= OBF_PROTOCOL;
-     	}
-       break;
-     default:
-       break;
-   }
-}
-
-/* Check whether the packet is Facebook Zero, and extracts SNI */
-int get_fb0_tags(tcp_pair *ptp, void *pdata, int data_length)
-{
-  char cname[120];
-  unsigned char last_value_offset;
-
-  //Look for CHLO string at position 9. Packet must be longer than 9+4+1=14
-  // If CHLO is found, packet is classified as FB0
-  void *chlo_start = pdata + 9;
-  if ( data_length > 9+5 && memcmp(chlo_start, "CHLO", 4) == 0 )
-  {
-    void *tag_start_ptr = pdata + 17;
-    unsigned char tags_nb = *( (unsigned char*)(pdata + 9 + 4) );
-    void *values_start_ptr = tag_start_ptr + tags_nb*8;
-    
-    // Verify that the packet can contain all tags
-    if ( data_length >= 17 + 8* tags_nb)
-    {
-      int i;
-      // Loop over the tags
-      last_value_offset = 0;
-      for (i=0;i<tags_nb; i++)
-      {
-        void * this_tag_ptr = tag_start_ptr + i*8;
-        unsigned char this_value_offset = *( (unsigned char*)(this_tag_ptr + 4) );
-        //Look For SNI if packet is enough long
-        if ( data_length >=  17 + tags_nb*8 + this_value_offset && memcmp(this_tag_ptr, "SNI",3) == 0 )
-         {
-           // If SNI is found, get the string
-           int sni_len = this_value_offset - last_value_offset;
-//          char * sni = malloc ( sni_len + 1 );
-           memcpy ( cname, values_start_ptr + last_value_offset, sni_len < 119 ? sni_len : 119 );
-           cname[sni_len < 119 ? sni_len : 119] = '\0';
-
-           // crosscheck that subject has a reasonable syntax
-           if (regexec(&re_ssl_subject,cname, (size_t) 0, NULL, 0)==0)
-            {
-	      if (regexec(&re_ssl_clean,cname, (size_t) 0, NULL, 0)==0)
-                ptp->ssl_client_subject = strdup(cname);
-            }
-
-          // printf("FB0 SNI: %s\n",cname);
-         }
-        else if ( data_length >=  17 + tags_nb*8 + this_value_offset && memcmp(this_tag_ptr, "ALPN",4) == 0 )
-         {
-	   // We are extracting the ALPN, even if currently we do not store the information
-           int alpn_len = this_value_offset - last_value_offset;
-           memcpy ( cname, values_start_ptr + last_value_offset, alpn_len < 119 ? alpn_len : 119 );
-           cname[alpn_len < 119 ? alpn_len : 119] = '\0';
-	   
-           //printf(" - FB0 ALPN: >%s<\n",cname);
-	   
-	 }
-     
-        last_value_offset = this_value_offset;
-      }
-       
-    }
-    return 1;
-  }
-  else
-    return 0;
-}
-
-void mse_protocol_check(tcp_pair *ptp)
-{
-/* Identification of BitTorrent Message Stream Encryption protocol
-   At the handshake, the (concurrent) handshake between A<->B is
-    A -> B between 96 and 608 bytes
-    B -> A between 96 and 608 bytes
-   Data entropy is high (>GLOBALS.Entropy_Threshold for both the high and the low
-   nibbles)
-   Due to the protocol behavior, messages are overlapped and fragmented 
-   randomly, so we must check the cumulative size of consecutive packets
-*/	
- int length_test;
-
- if (ptp->c2s.msg_count==0 || ptp->s2c.msg_count==0)
-   return;
-   
- length_test = FALSE;
- 
- if (ptp->c2s.msg_size[0]>=96 && ptp->c2s.msg_size[0]<=608)
-  {
-    if ((ptp->s2c.msg_size[0]>=96 && ptp->s2c.msg_size[0]<=608)||
-        ((ptp->s2c.msg_size[0]+ptp->s2c.msg_size[1])>=96 && 
-           (ptp->s2c.msg_size[0]+ptp->s2c.msg_size[1])<=608))
-     {
-       length_test = TRUE;
-     }
-  }
- else if ((ptp->c2s.msg_size[0]+ptp->c2s.msg_size[1])>=96 && 
-          (ptp->c2s.msg_size[0]+ptp->c2s.msg_size[1])<=608)
-  {
-    if ((ptp->s2c.msg_size[0]>=96 && ptp->s2c.msg_size[0]<=608)||
-        ((ptp->s2c.msg_size[0]+ptp->s2c.msg_size[1])>=96 && 
-         (ptp->s2c.msg_size[0]+ptp->s2c.msg_size[1])<=608))
-     {
-       length_test = TRUE;
-     }
-  }
-  
-  if (length_test == TRUE)
-   {
-     if (ptp->entropy_h_valid!=1 || ptp->entropy_l_valid!=1)
-      {
-	compute_nibbles_entropy(ptp);
-      }
-      
-     if ( ptp->entropy_h>GLOBALS.Entropy_Threshold && 
-          ptp->entropy_l>GLOBALS.Entropy_Threshold )
-       if (ptp->con_type==UNKNOWN_PROTOCOL)
-         /* Don't overwrite existing classification with MSE/PE */
-         ptp->con_type |= MSE_PROTOCOL; 
-   }
-
- return;
- 
-}
-
-
-#ifdef MSN_CLASSIFIER
-void msn_s2c_state_update(tcp_pair *ptp, int state,int http_tunneling, void *pdata, void *plast)
-{
-  char MSNP_ver[8] = "?\0";
-  char *pMSNP_ver;
-
-  if (http_tunneling == 1)
-   {
-     ptp->s2c.msn.POST_count = ptp->c2s.msn.POST_count = 1;
-     ptp->s2c.msn.MFT = ptp->c2s.msn.MFT = MSN_HTTP_TUNNELING;
-   }
-   
-  switch (state)
-   {
-     case VER:
-        ptp->con_type |= MSN_PROTOCOL;
-	ptp->con_type &= ~OBF_PROTOCOL;
-	ptp->con_type &= ~MSE_PROTOCOL;
-        ptp->state = MSN_VER_S2C;
-        ptp->s2c.msn.MSN_VER_count = 1;
-	
-	   /* try to find MSN Protocol version negoziated */
-	if ((char *) pdata + 13 <= (char *) plast)
-	 {
-	   pMSNP_ver = (char *) pdata + 6;
-	   sscanf ((char *) (pMSNP_ver), "%7s", MSNP_ver);
-
-       	   strncpy (ptp->s2c.msn.MSNPversion, MSNP_ver,7);
-	   strncpy (ptp->c2s.msn.MSNPversion, MSNP_ver,7);
-	 }
-	break;
-     case USR:
-        ptp->con_type |= MSN_PROTOCOL;
-	ptp->con_type &= ~OBF_PROTOCOL;
-	ptp->con_type &= ~MSE_PROTOCOL;
-        ptp->state = MSN_USR_S2C;
-        ptp->s2c.msn.MSN_USR_count = 1;
-	break;
-     case ANS:
-        ptp->con_type |= MSN_PROTOCOL;
-	ptp->con_type &= ~OBF_PROTOCOL;
-	ptp->con_type &= ~MSE_PROTOCOL;
-        ptp->state = MSN_ANS_COMMAND;
-        ptp->s2c.msn.MSN_ANS_count = 1;
-	break;
-     case IRO:
-        ptp->con_type |= MSN_PROTOCOL;
-	ptp->con_type &= ~OBF_PROTOCOL;
-	ptp->con_type &= ~MSE_PROTOCOL;
-        ptp->state = MSN_IRO_COMMAND;
-        ptp->s2c.msn.MSN_IRO_count = 1;
-        break;
-     default:
-        break;
-   }
-}
-#endif
-
-void compute_nibbles_entropy (tcp_pair *ptp)
-{
-/* Compute information entropy over high and low nibbles (4 bits)
-   of the available payload. Only the first four payload packets are
-   considered. 
-*/
-  int i;
-  double probi;
-
-  if (ptp == NULL)
-    return;
-
-  if (ptp->entropy_h_valid == 0)
-   {
-     ptp->entropy_h = 0.0;
-     if (ptp->nibble_h_count>0)
-      {
-        for (i=0; i<16;i++)
-         {
-           if (ptp->nibbles_h[i]==0) continue;
-           probi = ptp->nibbles_h[i]*1.0/ptp->nibble_h_count;
-           ptp->entropy_h += (-1.0)*probi*log(probi);
-         }
-        ptp->entropy_h /= LOG2;
-        ptp->entropy_h_valid = 1;
-      }
-   }
-
-  if (ptp->entropy_l_valid == 0)
-   {
-     ptp->entropy_l = 0.0;
-     if (ptp->nibble_l_count>0)
-      {
-        for (i=0; i<16;i++)
-         {
-           if (ptp->nibbles_l[i]==0) continue;
-           probi = ptp->nibbles_l[i]*1.0/ptp->nibble_l_count;
-           ptp->entropy_l += (-1.0)*probi*log(probi);
-         }
-        ptp->entropy_l /= LOG2;
-        ptp->entropy_l_valid = 1;
-      }
-   }
-
-  return;
-}
-
-void compute_nibbles (struct ip *pip, void *pproto, int tproto, void *pdir,
-	       int dir, void *hdr, void *plast)
-{
-/* Compute information entropy over high and low nibbles (4 bits)
-   of the available payload. Only the first four payload packets are
-   considered. 
-*/
-  void *pdata;			/*start of payload */
-  tcp_pair *ptp;
-  int data_length, payload_len;
-  int i;
-  char c;
-  char c1,c2;
-
-  tcphdr *ptcp;
-  ptcp = (tcphdr *) hdr;
-
-  if (tproto == PROTOCOL_UDP)
-    {
-       return;
-    }
-
-  ptp = ((tcb *) pdir)->ptp;
-
-  if (ptp == NULL)
-    return;
-
-  if (ptp->nibble_packet_count>=4)
-   return;
-
-  pdata = (char *) ptcp + ptcp->th_off * 4;
-  payload_len = getpayloadlength (pip, plast) - ptcp->th_off * 4;
-  data_length = (char *) plast - (char *) pdata + 1;
-
-  if (data_length <= 0 || payload_len == 0)
-    return;
-
-  for (i=0;i<min(data_length,GLOBALS.Entropy_Sample);i++)
-   {
-     c = *(char *)(pdata+i);
-
-     c1 = c & 0x0f;
-     c2 = (c>>4)&0x0f;
-
-     ptp->nibbles_l[(int)c1]++;
-     ptp->nibble_l_count++;
-     ptp->entropy_l_valid = 0;
-     ptp->nibbles_h[(int)c2]++;
-     ptp->nibble_h_count++;
-     ptp->entropy_h_valid = 0;
-   }
-   ptp->nibble_packet_count++;
-
-  return;
-}
-
 void
 tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	       int dir, void *hdr, void *plast)
@@ -1050,7 +661,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
   void *pdata;			/*start of payload */
   int data_length, payload_len;
   tcb *tcp_stats;
-  struct rtphdr *prtp;
 
   tcphdr *ptcp;
   ptcp = (tcphdr *) hdr;
@@ -1074,16 +684,8 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
   if (data_length <= 0 || payload_len == 0)
     return;
 
-  compute_nibbles(pip,pproto,tproto,pdir,dir,hdr,plast);
-
-  if (ACK_SET(ptcp) && PUSH_SET(ptcp))
-    ed2k_obfuscate_check(ptp,payload_len);
-
   rtmp_handshake_check(ptp,pdata,payload_len,dir);
 
-  if (ptp->con_type==UNKNOWN_PROTOCOL)
-     mse_protocol_check(ptp);
-  
   if (dir == C2S)
     tcp_stats = &(ptp->c2s);
   else
@@ -1101,43 +703,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	        {
 	          tcp_stats->u_protocols.f_http = current_time;
 	          ptp->state = HTTP_COMMAND;
-                  ptp->http_data = HTTP_GET;
-#ifdef VIDEO_DETAILS
-                  strcpy(ptp->http_ytid,"--");
-                  strcpy(ptp->http_ytitag,"--");
-		  strcpy(yt_id,"--");
-		  strcpy(yt_itag,"--");
-		  yt_seek = 0;
-                  yt_redir_mode = 0;
-                  yt_redir_count = 0;
-		  yt_mobile = 0;
-		  yt_stream = 0;
-#endif
-
-                  ptp->http_data = classify_http_get(pdata,data_length);
-#ifdef VIDEO_DETAILS
-                  if (ptp->http_data==HTTP_YOUTUBE_VIDEO ||
-		      ptp->http_data==HTTP_YOUTUBE_SITE ||
-		      ptp->http_data==HTTP_YOUTUBE_SITE_DIRECT ||
-		      ptp->http_data==HTTP_YOUTUBE_SITE_EMBED ||
-		      ptp->http_data==HTTP_YOUTUBE_VIDEO204 ||
-		      ptp->http_data==HTTP_YOUTUBE_204 )
-                   {
-                     strncpy(ptp->http_ytid,yt_id,49);
-                     strncpy(ptp->http_ytitag,yt_itag,4);
-			  ptp->http_ytseek=yt_seek;
-			  ptp->http_ytredir_mode=yt_redir_mode;
-			  ptp->http_ytredir_count=yt_redir_count;
-			  ptp->http_ytmobile = yt_mobile;
-			  ptp->http_ytstream = yt_stream;
-                   }
-#endif
-#ifdef SNOOP_DROPBOX
-                  if (ptp->http_data==HTTP_DROPBOX )
-                   {
-                     strncpy(ptp->http_ytid,yt_id,49);
-                   }
-#endif
 	        }
 	      break;
 	    case POST:
@@ -1145,19 +710,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	        {
 	          tcp_stats->u_protocols.f_http = current_time;
 	          ptp->state = HTTP_COMMAND;
-		  ptp->http_data = HTTP_POST;
-#ifdef VIDEO_DETAILS
-                  strcpy(ptp->http_ytid,"--");
-                  strcpy(ptp->http_ytitag,"--");
-		  strcpy(yt_id,"--");
-		  strcpy(yt_itag,"--");
-		  yt_seek = 0;
-                  yt_redir_mode = 0;
-                  yt_redir_count = 0;
-		  yt_mobile = 0;
-		  yt_stream = 0;
-#endif
-                  ptp->http_data = classify_http_post(pdata,data_length);
 	        }
 	      break;
 	    case PATCH:         /* Include also typical REST methods */
@@ -1177,88 +729,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	          ptp->state = HTTP_COMMAND;
 	        }
 	      break;
-#ifdef YMSG_CLASSIFIER		/* Yahoo! Messenger */
-	   case YMSG:
-	     ptp->state = YMSGP;
-	     ptp->con_type |= YMSG_PROTOCOL;
-	     ptp->con_type &= ~OBF_PROTOCOL;
-	     ptp->con_type &= ~MSE_PROTOCOL;
-
-	      /* try to find Yahoo! Messenger Protocol version */
-
-	     if ((char *) pdata + 5 > (char *) plast)
-	         return;
-
-#if(BYTE_ORDER == BIG_ENDIAN)
-	     ptp->s2c.ymsg.YMSGPversion = ptp->c2s.ymsg.YMSGPversion =
-	         *((u_int16_t *) (pdata + 4));
-#else
-	     ptp->s2c.ymsg.YMSGPversion = ptp->c2s.ymsg.YMSGPversion =
-	         *((u_int16_t *) (pdata + 5));
-#endif
-	     break;
-#endif
-#ifdef XMPP_CLASSIFIER		/* Jabber - Google Talk */
-	   case XMPP_SMELL:
-	     ptp->state = XMPP;
-	     ptp->con_type |= XMPP_PROTOCOL;
-	     ptp->con_type &= ~OBF_PROTOCOL;
-	     ptp->con_type &= ~MSE_PROTOCOL;
-	     break;
-#endif
-#ifdef MSN_CLASSIFIER
-	    case VER:		/* start connection with DS or NS */
-	      if (dir == C2S)
-	        {
- 	          ptp->c2s.msn.login = current_time;
-	          ptp->c2s.msn.MSN_VER_count = 1;
-	          ptp->state = MSN_VER_C2S;
-		 }
-	      else
-	        {
-	          msn_s2c_state_update(ptp,VER,0,pdata,plast);
-		}
-	      break;
-
-	    case USR:		/* start connection with SB to enstablish a chat session */
-	      if (dir == C2S)
-	        {
-	          ptp->c2s.msn.start_chat = current_time;
-	          ptp->c2s.msn.MSN_USR_count = 1;
-	          ptp->state = MSN_USR_C2S;
-		}
-	      else
-	        {
-	          msn_s2c_state_update(ptp,USR,0,pdata,plast);
-		}
-	      break;
-
-	    case ANS:		/* start connection with SB to accept a chat session */
-	      if (dir == C2S)
-	        {
-	          ptp->c2s.msn.start_chat = current_time;
-	          ptp->c2s.msn.MSN_ANS_count = 1;
-	          ptp->state = MSN_ANS_COMMAND;
-		}
-	      else
-	        {
-	          msn_s2c_state_update(ptp,ANS,0,pdata,plast);
-		}
-	      break;
-
-	    case IRO:		/* start connection with SB to accept a chat session */
-	      if (dir == C2S)
-	        {
-	          ptp->c2s.msn.MSN_IRO_count = 1;
-	          ptp->state = MSN_IRO_COMMAND;
-		}
-	      else
-	        {
-	          msn_s2c_state_update(ptp,IRO,0,pdata,plast);
-		}
-	      break;
-#endif
-#ifdef RTSP_CLASSIFIER
             case DESC:
 	      if ((dir == C2S) && ((char *) pdata + 8 <= (char *) plast))
                {
@@ -1273,7 +743,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 		  }
 	       }
 	      break;
-#endif
 
             case SMTP_220:
               /* A SMTP dialog is open by the server with the "220 xxxx"
@@ -1320,18 +789,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	        }
 	      break;
 
-            case FB0_HEADER:
-              /* Facebook Zero Protocol 
-	      */
-	      if (dir == C2S && ((char *) pdata + 14 <= (char *) plast))
-	       {
-		 if (get_fb0_tags(ptp, pdata, data_length) )
-		  {
-		    ptp->state = FB0_OPENING;
-		  }
-	        }
-	      break;
-	      
            default:
              if ( dir==C2S && ((char *) pdata + 6 <= (char *) plast) && ssl_client_check(ptp,pdata,payload_len,data_length) ) {
                  // check if the Client Hello message carries a sessionID
@@ -1348,27 +805,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
              break;
 	 }
 	break;
-     case FB0_OPENING:
-        if (dir == S2C && ((char *) pdata + 6 <= (char *) plast))
-	 {
-	   /* Match the S2C FB0 header to confirm the flow
-	   Look of 1QTV0 at the beginning */
-	   if (*((u_int32_t *) pdata) == FB0_HEADER)
-	     {
-	       /* The server side is FB0 as well */
-	       // printf("found server FB0\n");
-	        ptp->con_type |= FB0_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-	        ptp->con_type &= ~MSE_PROTOCOL;
-	        ptp->state = IGNORE_FURTHER_PACKETS;
-		break;
-	     }
-
-	   if (ptp->packets > MAX_HTTP_COMMAND_PACKETS)
-	     ptp->state = IGNORE_FURTHER_PACKETS;
-            
-	 }
-        break;
      case SMTP_OPENING:
         if (dir == C2S && ((char *) pdata + 4 <= (char *) plast))
 	 {
@@ -1382,8 +818,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	      case SMTP_helo:
 	      case SMTP_ehlo:
 	        ptp->con_type |= SMTP_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-   	        ptp->con_type &= ~MSE_PROTOCOL;
 	        ptp->state = IGNORE_FURTHER_PACKETS;
 	        break;
 	      default:
@@ -1406,8 +840,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	      case POP_QUIT:
               case POP_APOP:
 	        ptp->con_type |= POP3_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-  	        ptp->con_type &= ~MSE_PROTOCOL;
 	        ptp->state = IGNORE_FURTHER_PACKETS;
 	        break;
 	      default:
@@ -1443,8 +875,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
               )
 	     {
 	        ptp->con_type |= IMAP_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-	        ptp->con_type &= ~MSE_PROTOCOL;
 	        ptp->state = IGNORE_FURTHER_PACKETS;
 		break;
 	     }
@@ -1461,62 +891,26 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	      case HTTP:
 	        tcp_stats->u_protocols.f_http = current_time;
 	        ptp->con_type |= HTTP_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-	        ptp->con_type &= ~MSE_PROTOCOL;
 	        ptp->state = HTTP_RESPONSE;
-#ifdef VIDEO_DETAILS
+                /* store the response code, only if made of digits */
                 if ((char *) pdata + 13 <= (char *) plast)
 		  {
+		    int idx;
+
                     memcpy(ptp->http_response,(char *) pdata+9,3);
 		    ptp->http_response[3]='\0';
-		    /* At lease one webserver (IdeaWebServer/v0.80) returns an invalid "0" response code
-		    producing an invalid http_response[] field.
-		    Let's do a sanity check, so that only digits are included
-		    */
-		    {
-		      int idx;
-		      for (idx = 0; idx<3 ; idx++)
-		      {
-			if (!isdigit(ptp->http_response[idx]))
-			  {
-			    ptp->http_response[idx]='\0';
-			    break;
-			  }
-		      }
-		      if (strlen(ptp->http_response)==0)
-                        strncpy(ptp->http_response,"000",4);
-		    }
+		    for (idx = 0; idx<3 ; idx++)
+		      if (!isdigit(ptp->http_response[idx]))
+			{
+			  ptp->http_response[idx]='\0';
+			  break;
+			}
+		    if (strlen(ptp->http_response)==0)
+                      strncpy(ptp->http_response,"000",4);
 		  }
                 else
-		  {
-                    strncpy(ptp->http_response,"000",4);
-		  }
-#endif
+                  strncpy(ptp->http_response,"000",4);
 	        break;
-	      case ICY:
-	        tcp_stats->u_protocols.f_icy = current_time;
-	        ptp->con_type |= ICY_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-	        ptp->con_type &= ~MSE_PROTOCOL;
-	        ptp->state = IGNORE_FURTHER_PACKETS;
-	        break;
-#ifdef MSN_CLASSIFIER
-	      case VER:		/* start connection with DS or NS */
-	        msn_s2c_state_update(ptp,VER,1,pdata,plast);
-	        break;
-
-	      case USR:		/* start connection with SB to enstablish a chat session */
-	        msn_s2c_state_update(ptp,USR,1,pdata,plast);
-	        break;
-
-	      case ANS:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,ANS,1,pdata,plast);
-	        break;
-
-	      case IRO:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,IRO,1,pdata,plast);
-	        break;
-#endif
 	      default:
 	        break;
 	    }
@@ -1527,201 +921,10 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	 }
 	break;
      case HTTP_RESPONSE:
-        if (dir == S2C && ((char *) pdata + 4 <= (char *) plast))
-	 {
-	   switch (*((u_int32_t *) pdata))
-	    {
-#ifdef MSN_CLASSIFIER
-	      case VER:		/* start connection with DS or NS */
-	        msn_s2c_state_update(ptp,VER,1,pdata,plast);
-	        break;
-
-	      case USR:		/* start connection with SB to enstablish a chat session */
-	        msn_s2c_state_update(ptp,USR,1,pdata,plast);
-	        break;
-
-	      case ANS:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,ANS,1,pdata,plast);
-	        break;
-
-	      case IRO:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,IRO,1,pdata,plast);
-	        break;
-#endif
-#ifdef VIDEO_DETAILS
-              case FLV:         /* parse header of an FLV video */
-              case FLV2:         /* parse header of an FLV video */
-                if (ptp->http_data==HTTP_YOUTUBE_VIDEO||
-                    ptp->http_data==HTTP_YOUTUBE_VIDEO204||
-                    ptp->http_data==HTTP_YOUTUBE_204)
-                 {
-                   parse_flv_header(ptp,pdata,data_length);
-                 }
-                else
-                 {
-                   if ( ((char *) pdata + 37 <= (char *) plast)
-                     && memcmp( pdata+27, "onMetaData", 10 )==0 )
-                    {
-                      if (ptp->http_data==HTTP_GET)
-                        ptp->http_data = HTTP_VIDEO_CONTENT;
-                    }
-                 }
-                break;
-              case MP4:         /* parse header of an MP4 container */
-                if ( ((char *) pdata + 12 <= (char *) plast)
-                     && memcmp( pdata+4, "ftyp", 4)==0 )
-                  {
-                      if (ptp->http_data==HTTP_GET)
-                        ptp->http_data = HTTP_VIDEO_CONTENT;
-                  }
-                break;
-#endif
-	      default:
-#ifdef RTSP_CLASSIFIER
-	      /* convert the snap in a null-terminated string to use strstr */
-  /*  -MMM- 15/12/12 
-  **  Code disabled since it was altering the packet payload.
-  **  Besides the obvious correction (plast+1), I'd like to investigate 
-  **  the usefulness of looking for the string in the complete packet
-           
-	        *((char *) plast) = '\0';
-	        if (strstr ((char *) pdata, "RTSP"))
-	         {
-	           tcp_stats->u_protocols.f_rtsp = current_time;
-	           ptp->state = RTSP_RESPONSE;
- 	           ptp->con_type |= RTSP_PROTOCOL;
-	           ptp->con_type &= ~OBF_PROTOCOL;
-	           ptp->con_type &= ~MSE_PROTOCOL;
-	         }
-  */
-#endif
-	        break;
-	    }
-
-	  if (ptp->packets > MAX_HTTP_RESPONSE_PACKETS)
-	    ptp->state = IGNORE_FURTHER_PACKETS;
-         }
-        else if (dir == C2S && ((char *) pdata + 4 <= (char *) plast))
-	 {
-           enum http_content new_http_data;
-           /* Apply the Web2.0 rules for further commands in 
-	      not yet classified HTTP flows
-	   */
-	   switch (*((u_int32_t *) pdata))
-	    {
-              case GET:
-                if (ptp->http_data==HTTP_GET || ptp->http_data==HTTP_POST
-                   || ptp->http_data== HTTP_YOUTUBE_204
-		   )
-	         {
-#ifdef VIDEO_DETAILS
-		  strcpy(yt_id,"--");
-		  strcpy(yt_itag,"--");
-#endif
-                   new_http_data = classify_http_get(pdata,data_length);
-                   /* Only update previous classification if new one
-		      is specific */
-                   if ( ptp->http_data== HTTP_YOUTUBE_204 && 
-		        new_http_data == HTTP_YOUTUBE_VIDEO)
-	             {
-		       ptp->http_data = HTTP_YOUTUBE_VIDEO204;
-#ifdef VIDEO_DETAILS
-                       strncpy(ptp->http_ytid,yt_id,49);
-                       strncpy(ptp->http_ytitag,yt_itag,4);
-		       ptp->http_ytseek=yt_seek; 
-			  ptp->http_ytredir_mode=yt_redir_mode;
-			  ptp->http_ytredir_count=yt_redir_count;
-			  ptp->http_ytmobile = yt_mobile;
-			  ptp->http_ytstream = yt_stream;
-#endif			
-		     }
-		   else if ( new_http_data != HTTP_GET && new_http_data != HTTP_POST)
-		     { 
-		       ptp->http_data = new_http_data;
-#ifdef VIDEO_DETAILS
-                       if (ptp->http_data==HTTP_YOUTUBE_VIDEO ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE_DIRECT ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE_EMBED||
- 		           ptp->http_data==HTTP_YOUTUBE_VIDEO204 ||
-		           ptp->http_data==HTTP_YOUTUBE_204 )
-                        {
-                          strncpy(ptp->http_ytid,yt_id,49);
-                          strncpy(ptp->http_ytitag,yt_itag,4);
-			  ptp->http_ytseek=yt_seek; 
-			  ptp->http_ytredir_mode=yt_redir_mode;
-			  ptp->http_ytredir_count=yt_redir_count;
-			  ptp->http_ytmobile = yt_mobile;
-			  ptp->http_ytstream = yt_stream;
-                        }
-#endif			
-#ifdef SNOOP_DROPBOX
-                       if (ptp->http_data==HTTP_DROPBOX )
-                        {
-                          strncpy(ptp->http_ytid,yt_id,49);
-                        }
-#endif
-	             }
-                 }
-	        break;
-              case POST:
-                if (ptp->http_data==HTTP_GET || ptp->http_data==HTTP_POST
-                   || ptp->http_data== HTTP_YOUTUBE_204
-		   )
-	         {
-#ifdef VIDEO_DETAILS
-		  strcpy(yt_id,"--");
-		  strcpy(yt_itag,"--");
-#endif
-                   new_http_data = classify_http_post(pdata,data_length);
-                   /* Only update previous classification if new one
-		      is specific */
-                   if ( ptp->http_data== HTTP_YOUTUBE_204 && 
-		        new_http_data == HTTP_YOUTUBE_VIDEO)
-	             {
-		       ptp->http_data = HTTP_YOUTUBE_VIDEO204;
-#ifdef VIDEO_DETAILS
-                       strncpy(ptp->http_ytid,yt_id,49);
-                       strncpy(ptp->http_ytitag,yt_itag,4);
-		       ptp->http_ytseek=yt_seek; 
-			  ptp->http_ytredir_mode=yt_redir_mode;
-			  ptp->http_ytredir_count=yt_redir_count;
-			  ptp->http_ytmobile = yt_mobile;
-			  ptp->http_ytstream = yt_stream;
-#endif			
-		     }
-		   else if ( new_http_data != HTTP_GET && new_http_data != HTTP_POST)
-		    { 
-		      ptp->http_data = new_http_data;
-#ifdef VIDEO_DETAILS
-                      if (ptp->http_data==HTTP_YOUTUBE_VIDEO ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE_DIRECT ||
-		           ptp->http_data==HTTP_YOUTUBE_SITE_EMBED||
- 		           ptp->http_data==HTTP_YOUTUBE_VIDEO204 ||
-		           ptp->http_data==HTTP_YOUTUBE_204 )
-                       {
-                         strncpy(ptp->http_ytid,yt_id,49); 
-                         strncpy(ptp->http_ytitag,yt_itag,4);
-			  ptp->http_ytseek=yt_seek; 
-			  ptp->http_ytredir_mode=yt_redir_mode;
-			  ptp->http_ytredir_count=yt_redir_count;
-			  ptp->http_ytmobile = yt_mobile;
-			  ptp->http_ytstream = yt_stream;
-                       }
-#endif
-		    }
-                 }
-	        break;
-	      default:
-	        break;
-	    }
-	   if (ptp->packets > MAX_HTTP_RESPONSE_PACKETS)
-	     ptp->state = IGNORE_FURTHER_PACKETS;
-	 }
-
+        if ((char *) pdata + 4 <= (char *) plast &&
+            ptp->packets > MAX_HTTP_RESPONSE_PACKETS)
+          ptp->state = IGNORE_FURTHER_PACKETS;
         break;
-#ifdef RTSP_CLASSIFIER
      case RTSP_COMMAND:
         if (dir == S2C && ((char *) pdata + 4 <= (char *) plast))
 	 {
@@ -1731,8 +934,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	        tcp_stats->u_protocols.f_rtsp = current_time;
 	        ptp->state = RTSP_RESPONSE;
 	        ptp->con_type |= RTSP_PROTOCOL;
-	        ptp->con_type &= ~OBF_PROTOCOL;
-	        ptp->con_type &= ~MSE_PROTOCOL;
 	        break;
 	      default:
 	        break;
@@ -1742,84 +943,9 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	 }
         break;
      case RTSP_RESPONSE:
-#ifdef RTP_CLASSIFIER_DISABLED
-       /* 25/10/19 -MMM- 
-	* Disabled this code to avoid RTP over TCP potential info messing with the normal UDP
-	* RTP/RTCP streams logs
-	*/
-        if (dir == S2C && ((char *) pdata + 1 <= (char *) plast))
-	 {
-	   if (*(char *) pdata == RTP_MAGICNUMBER)
-	    {
-	      prtp = pdata + 4;
-
-	      if ((u_long) prtp + (sizeof (struct rtphdr)) - 1 >
-		  (u_long) plast)
-		ptp->rtp_pt = UNKNOWN_RTP_PAYLOAD_TYPE;
-	      else
-		ptp->rtp_pt = prtp->pt;
-
-	      tcp_stats->u_protocols.f_rtp = current_time;
-
-	      ptp->state = IGNORE_FURTHER_PACKETS;
-	      ptp->con_type |= RTP_PROTOCOL;
-	      ptp->con_type &= ~OBF_PROTOCOL;
-	      ptp->con_type &= ~MSE_PROTOCOL;
-	    }
-	 }
-#endif
 	if (ptp->packets > MAX_RTSP_RESPONSE_PACKETS)
 	  ptp->state = IGNORE_FURTHER_PACKETS;
         break;
-#endif
-#ifdef YMSG_CLASSIFIER		/* Yahoo! Messenger */
-     case YMSGP:
-	FindConTypeYmsg (ptp, pip, ptcp, plast, dir);
-	classify_ymsg_flow (ptp, dir);
-	return;
-#endif
-#ifdef XMPP_CLASSIFIER		/* Jabber - Google Talk */
-     case XMPP:
-	FindConTypeJabber (ptp, pip, ptcp, plast, dir);
-	classify_jabber_flow (ptp, dir);
-	return;
-#endif
-#ifdef MSN_CLASSIFIER
-     case MSN_VER_S2C:
-     case MSN_USR_S2C:
-     case MSN_IRO_COMMAND:
-	FindConTypeMsn (ptp, pip, ptcp, plast, dir);
-	classify_msn_flow (ptp, dir);
-	return;
-     case MSN_VER_C2S:
-     case MSN_USR_C2S:
-     case MSN_ANS_COMMAND:
-      /* These cases were not explicited stated in the spaghetti version */
-        if (dir == S2C && ((char *) pdata + 4 <= (char *) plast))
-	 {
-	   switch (*((u_int32_t *) pdata))
-	    {
-	      case VER:		/* start connection with DS or NS */
-	        msn_s2c_state_update(ptp,VER,0,pdata,plast);
-		break;
-
-	      case USR:		/* start connection with SB to enstablish a chat session */
-	        msn_s2c_state_update(ptp,USR,0,pdata,plast);
-	        break;
-
-	      case ANS:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,ANS,0,pdata,plast);
-	        break;
-
-	      case IRO:		/* start connection with SB to accept a chat session */
-	        msn_s2c_state_update(ptp,IRO,0,pdata,plast);
-	        break;
-	      default:
-	        break;
-	    }
-	 }
-	break;
-#endif     
      case SSL_HANDSHAKE:
         if (dir == C2S && ((char *) pdata + 6 <= (char *) plast))
          {
@@ -1874,12 +1000,7 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
             ssl_certificate_check(ptp,pdata,data_length);
 
 	    ptp->con_type |= SSL_PROTOCOL;
-	    ptp->con_type &= ~OBF_PROTOCOL;
-	    ptp->con_type &= ~MSE_PROTOCOL;
 	    ptp->state = SSL_DATA;
-	    
-	    map_tls_service(ptp);
-
 	  }
          else
 	  {
@@ -1934,8 +1055,6 @@ tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	        if (ssh_header_check(pdata))
 		 {
 	           ptp->con_type |= SSH_PROTOCOL;
-	           ptp->con_type &= ~OBF_PROTOCOL;
-	           ptp->con_type &= ~MSE_PROTOCOL;
 	           ptp->state = IGNORE_FURTHER_PACKETS;
 		 }
 	        break;
@@ -1974,71 +1093,12 @@ make_tcpL7_conn_stats (void *thisflow, int tproto)
 	{
 	case OUT_FLOW:
 	  add_histo (L7_TCP_num_out, type);
-          if (ptp->cloud_dst)
-	   {
-	     add_histo (L7_TCP_num_c_out, type);
-	   }
-	  else
-	   {
-	     add_histo (L7_TCP_num_nc_out, type);
-	   }
-	  if (type==L7_FLOW_HTTP)
-	   {
- 	     add_histo (L7_HTTP_num_out, YTMAP(ptp->http_data));
- 	     add_histo (L7_WEB_num_out, map_http_to_web(ptp));
-             if (ptp->cloud_dst)
-	      {
- 	     add_histo (L7_HTTP_num_c_out, YTMAP(ptp->http_data));
-	      }
-	     else
-	      {
- 	     add_histo (L7_HTTP_num_nc_out, YTMAP(ptp->http_data));
-	      }
-	   }
-	  else if (type==L7_FLOW_SSL)
-	   {
- 	     add_histo (L7_TLS_num_out, ptp->tls_service);
-	   }
 	  break;
 	case IN_FLOW:
 	  add_histo (L7_TCP_num_in, type);
-          if (ptp->cloud_src)
-	   {
-	     add_histo (L7_TCP_num_c_in, type);
-	   }
-	  else
-	   {
-	     add_histo (L7_TCP_num_nc_in, type);
-	   }
-	  if (type==L7_FLOW_HTTP)
-	   {
- 	     add_histo (L7_HTTP_num_in, YTMAP(ptp->http_data));
- 	     add_histo (L7_WEB_num_in, map_http_to_web(ptp));
-             if (ptp->cloud_src)
-	      {
- 	     add_histo (L7_HTTP_num_c_in, YTMAP(ptp->http_data));
-	      }
-	     else
-	      {
- 	     add_histo (L7_HTTP_num_nc_in, YTMAP(ptp->http_data));
-	      }
-	   }
-	  else if (type==L7_FLOW_SSL)
-	   {
- 	     add_histo (L7_TLS_num_in, ptp->tls_service);
-	   }
 	  break;
 	case LOC_FLOW:
 	  add_histo (L7_TCP_num_loc, type);
-	  if (type==L7_FLOW_HTTP)
-	   {
- 	     add_histo (L7_HTTP_num_loc, YTMAP(ptp->http_data));
- 	     add_histo (L7_WEB_num_loc, map_http_to_web(ptp));
-	   }
-	  else if (type==L7_FLOW_SSL)
-	   {
- 	     add_histo (L7_TLS_num_loc, ptp->tls_service);
-	   }
 	  break;
 	}
 return;
@@ -2046,28 +1106,14 @@ return;
 
 
 /* 
-   Map the classification to fit the HISTO labels
-   from the bitmask of the tcpL7 classifier and the eventual
-   p2p and skype detailed classifier map them to the histo definition
-   (from tstat.h)
+   Map the bitmask of the tcpL7 classifier to the L7 types
+   used by the histograms (from l7types.h)
 */
 
 int map_flow_type(tcp_pair *thisflow)
 {
    int type=L7_FLOW_UNKNOWN;
 
-
-   /* MSE (lowest priority) */
-   if(thisflow->con_type & MSE_PROTOCOL)
-   {
-      type = L7_FLOW_MSE;
-   }
-
-   /* OBF (penultimate lowest priority) */
-   if(thisflow->con_type & OBF_PROTOCOL)
-   {
-      type = L7_FLOW_OBF;
-   }
 
    /* RTMP  */
    if(thisflow->con_type & RTMP_PROTOCOL)
@@ -2117,34 +1163,10 @@ int map_flow_type(tcp_pair *thisflow)
       type = L7_FLOW_RTP;
    }
 
-   /* ICY */
-   if(thisflow->con_type & ICY_PROTOCOL)
-   {
-      type = L7_FLOW_ICY;
-   }
-
    /* RTCP */
    if(thisflow->con_type & RTCP_PROTOCOL)
    {
       type = L7_FLOW_RTCP;
-   }
-
-   /* MSN */
-   if(thisflow->con_type & MSN_PROTOCOL)
-   {
-      type = L7_FLOW_MSN;
-   }
-
-   /* YMSG */
-   if(thisflow->con_type & YMSG_PROTOCOL)
-   {
-      type = L7_FLOW_YMSG;
-   }
-
-   /* XMPP */
-   if(thisflow->con_type & XMPP_PROTOCOL)
-   {
-      type = L7_FLOW_XMPP;
    }
 
    /* SMTP */
@@ -2177,23 +1199,6 @@ int map_flow_type(tcp_pair *thisflow)
       type = L7_FLOW_SSH;
    }
 
-   /* Facebook Zero */
-   if(thisflow->con_type & FB0_PROTOCOL)
-   {
-      type = L7_FLOW_FB0;
-   }
-
-   /* P2P */
-   if(thisflow->con_type & P2P_PROTOCOL)
-   {
-      type = TCP_p2p_to_L7type(thisflow);
-   }
-
-   /* SKYPE */
-   if(thisflow->con_type & SKYPE_PROTOCOL)
-   {
-      type = L7_FLOW_SKYPE_TCP;
-   }
    return type;
 }
 
@@ -2203,88 +1208,17 @@ make_tcpL7_rate_stats (tcp_pair *thisflow, int len)
    int type;
    type = map_flow_type(thisflow);
 
-   /* skype bitrate is managed by skype.c since classification is done 
-      at flow end */
-      
-   if (type==L7_FLOW_SKYPE_E2E ||
-       type==L7_FLOW_SKYPE_E2O ||
-       type==L7_FLOW_SKYPE_TCP)
-       return;
-       
    if (internal_src && !internal_dst)
     {
        L7_bitrate.out[type] += len;
-      if (type==L7_FLOW_HTTP)
-       {
-	 HTTP_bitrate.out[YTMAP(thisflow->http_data)] += len;
-	 WEB_bitrate.out[map_http_to_web(thisflow)] += len;
-       }
-      else if (type==L7_FLOW_SSL)
-       {
-	 TLS_bitrate.out[thisflow->tls_service] += len;
-       }
-      if (cloud_dst)
-       {
-         L7_bitrate.c_out[type] += len;
-         if (type==L7_FLOW_HTTP)
-         {
-	   HTTP_bitrate.c_out[YTMAP(thisflow->http_data)] += len;
-         }
-       }
-      else
-       {
-         L7_bitrate.nc_out[type] += len;
-         if (type==L7_FLOW_HTTP)
-         {
-	   HTTP_bitrate.nc_out[YTMAP(thisflow->http_data)] += len;
-         }
-       }
     }
   else if (!internal_src && internal_dst)
     {
        L7_bitrate.in[type] += len;
-      if (type==L7_FLOW_HTTP)
-       {
-	 HTTP_bitrate.in[YTMAP(thisflow->http_data)] += len;
-	 WEB_bitrate.in[map_http_to_web(thisflow)] += len;
-       }
-      else if (type==L7_FLOW_SSL)
-       {
-	 TLS_bitrate.in[thisflow->tls_service] += len;
-       }
-      if (cloud_src)
-       {
-         L7_bitrate.c_in[type] += len;
-         if (type==L7_FLOW_HTTP)
-         {
-	   HTTP_bitrate.c_in[YTMAP(thisflow->http_data)] += len;
-         }
-       }
-      else
-       {
-         L7_bitrate.nc_in[type] += len;
-         if (type==L7_FLOW_HTTP)
-         {
-	   HTTP_bitrate.nc_in[YTMAP(thisflow->http_data)] += len;
-         }
-       }
     }
-#ifndef LOG_UNKNOWN
   else if (internal_src && internal_dst)
-#else
-  else
-#endif
     {
        L7_bitrate.loc[type] += len;
-      if (type==L7_FLOW_HTTP)
-       {
-	 HTTP_bitrate.loc[YTMAP(thisflow->http_data)] += len;
-	 WEB_bitrate.loc[map_http_to_web(thisflow)] += len;
-       }
-      else if (type==L7_FLOW_SSL)
-       {
-	 TLS_bitrate.loc[thisflow->tls_service] += len;
-       }
     }
 
   return;
@@ -2294,44 +1228,17 @@ void
 make_udpL7_rate_stats (ucb * thisflow, int len)
 {
    int type;
-   type = UDP_p2p_to_L7type(thisflow);
+   type = udp_to_L7type(thisflow);
 
-   /* skype bitrate is managed by skype.c since classification is done 
-      at flow end */
-   if (type==L7_FLOW_SKYPE_E2E ||
-       type==L7_FLOW_SKYPE_E2O ||
-       type==L7_FLOW_SKYPE_TCP) /* SKYPE_SIG is not counted in skype.c */
-       return;
-      
    if (internal_src && !internal_dst)
     {
        L7_udp_bitrate.out[type] += len;
-       if (cloud_dst)
-        {
-          L7_udp_bitrate.c_out[type] += len;
-        }
-       else
-        {
-          L7_udp_bitrate.nc_out[type] += len;
-        }
     }
   else if (!internal_src && internal_dst)
     {
        L7_udp_bitrate.in[type] += len;
-       if (cloud_src)
-        {
-          L7_udp_bitrate.c_in[type] += len;
-        }
-       else
-        {
-          L7_udp_bitrate.nc_in[type] += len;
-        }
     }
-#ifndef LOG_UNKNOWN
   else if (internal_src && internal_dst)
-#else
-  else
-#endif
     {
        L7_udp_bitrate.loc[type] += len;
     }

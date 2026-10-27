@@ -18,9 +18,6 @@
 
 
 #include "tstat.h"
-#include "tcpL7.h"
-#include "videoL7.h"
-#include <regex.h>
 
 /* DNS cache piece */
 #include "dns_cache.h"
@@ -31,8 +28,6 @@ long int udp_cleaned = 0;
 extern FILE *fp_logc;
 extern FILE *fp_lognc;
 extern FILE *fp_rtp_logc;
-extern FILE *fp_video_logc;
-extern FILE *fp_streaming_logc;
 extern FILE *fp_periodic_logc;
 
 extern Bool is_stdin;
@@ -45,17 +40,11 @@ extern struct L3_bitrates L3_bitrate;
 extern struct L4_bitrates L4_bitrate;
 /* end TOPIX */
 extern int log_level;
-extern int video_level;
 
 extern long int tcp_packet_count;
 extern Bool strict_privacy;
 
-#ifdef DNS_CACHE_PROCESSOR
 extern Bool dns_enabled;
-#endif
-
-Bool thread_stats_flag = FALSE;	/* parameter used to make not possible that two
-				   istances of the same thread can run at the same time */
 
 /* garbage offloading vars */
 int tcp_index = 0;
@@ -67,8 +56,6 @@ int search_count = 0;
 
 int num_tcp_pairs = 0;		/* how many pairs we've allocated */
 tcp_pair **ttp = NULL;		/* array of pointers to allocated pairs */
-struct tp_list_elem *tp_list_start = NULL;	/* starting point of the linked list */
-struct tp_list_elem *tp_list_curr = NULL;	/* current insert point of the linked list */
 u_long tcp_trace_count_outgoing = 0;
 u_long tcp_trace_count_incoming = 0;
 u_long tcp_trace_count_local = 0;
@@ -87,53 +74,6 @@ static u_int SynCount (tcp_pair * ptp);
 /*
 static u_int FinCount (tcp_pair * ptp);
 */
-void update_conn_log_mm_v2 (tcp_pair *tcp_save, tcb *pab, tcb *pba);
-
-#if defined(VIDEO_DETAILS) || defined(STREAMING_CLASSIFIER) 
-Bool is_video(tcp_pair *ptp_save);
-void update_video_log (tcp_pair *tcp_save, tcb *pab, tcb *pba);
-#endif
-
-#if defined(VIDEO_DETAILS) || defined(STREAMING_CLASSIFIER) 
-Bool is_streaming(tcp_pair *ptp_save);
-void update_streaming_log(tcp_pair *tcp_save, tcb *pab, tcb *pba);
-#endif
-
-/* Patterns for SSL_youtube*/
-regex_t yt_re[4];
-
-void init_ssl_youtube_patterns();
-Bool is_ssl_youtube(tcp_pair *ptp_save);
-extern Bool is_tls_netflix(tcp_pair *ptp_save);
-
-#ifdef CHECK_TCP_DUP
-Bool
-dup_tcp_check (struct ip *pip, struct tcphdr *ptcp, tcb * thisdir)
-{
-//  static int tot;
-  double delta_t = elapsed (thisdir->last_time, current_time);
-  
-  if (!PIP_ISV4(pip)) return FALSE;
-  
-  if (thisdir->last_ip_id == pip->ip_id &&
-      thisdir->last_checksum == ntohs(ptcp->th_sum) && 
-      delta_t < GLOBALS.Min_Delta_T_TCP_Dup_Pkt && thisdir->last_len == pip->ip_len)
-    {
- //      fprintf (fp_stdout, "dup tcp %d , id = %u ",tot++, pip->ip_id);
- //      fprintf (fp_stdout, "TTL: %d ID: %d Checksum: %d Delta_t: %g\n", 
- //           pip->ip_ttl,pip->ip_id,ntohs(ptcp->th_sum),delta_t);
-      thisdir->last_ip_id = pip->ip_id;
-      thisdir->last_len = pip->ip_len;
-      thisdir->last_checksum = ntohs(ptcp->th_sum);
-      return TRUE;
-    }
- //   fprintf (fp_stdout, "NOT dup tcp %d\n",tot);
-  thisdir->last_ip_id = pip->ip_id;
-  thisdir->last_len = pip->ip_len;
-  thisdir->last_checksum = ntohs(ptcp->th_sum);
-  return FALSE;
-}
-#endif
 
 
 void
@@ -154,11 +94,7 @@ tcp_header_stat (struct tcphdr *ptcp, struct ip *pip, void *plast)
 	  add_histo (tcp_port_synsrc_in, (float) ntohs (ptcp->th_sport));
 	  add_histo (tcp_port_syndst_in, (float) ntohs (ptcp->th_dport));
 	}
-#ifndef LOG_UNKNOWN
       else if (internal_src && internal_dst)
-#else
-      else
-#endif
 	{
 	  add_histo (tcp_port_synsrc_loc, (float) ntohs (ptcp->th_sport));
 	  add_histo (tcp_port_syndst_loc, (float) ntohs (ptcp->th_dport));
@@ -171,14 +107,6 @@ tcp_header_stat (struct tcphdr *ptcp, struct ip *pip, void *plast)
       L3_bitrate.out[PIP_ISV6(pip)?L3_IPv6_TCP:L3_IPv4_TCP] += ip_len;
       add_histo (tcp_port_src_out, (float) ntohs (ptcp->th_sport));
       add_histo (tcp_port_dst_out, (float) ntohs (ptcp->th_dport));
-      if (cloud_dst)
-       {
-         L4_bitrate.c_out[TCP_TYPE] += ip_len;
-       }
-      else
-       {
-         L4_bitrate.nc_out[TCP_TYPE] += ip_len;
-       }
     }
   else if (!internal_src && internal_dst)
     {
@@ -186,20 +114,8 @@ tcp_header_stat (struct tcphdr *ptcp, struct ip *pip, void *plast)
       L3_bitrate.in[PIP_ISV6(pip)?L3_IPv6_TCP:L3_IPv4_TCP] += ip_len;
       add_histo (tcp_port_src_in, (float) ntohs (ptcp->th_sport));
       add_histo (tcp_port_dst_in, (float) ntohs (ptcp->th_dport));
-      if (cloud_src)
-       {
-         L4_bitrate.c_in[TCP_TYPE] += ip_len;
-       }
-      else
-       {
-         L4_bitrate.nc_in[TCP_TYPE] += ip_len;
-       }
     }
-#ifndef LOG_UNKNOWN
   else if (internal_src && internal_dst)
-#else
-  else
-#endif
     {
       L4_bitrate.loc[TCP_TYPE] += ip_len;
       L3_bitrate.loc[PIP_ISV6(pip)?L3_IPv6_TCP:L3_IPv4_TCP] += ip_len;
@@ -252,7 +168,6 @@ CopyAddr (tcp_pair_addrblock * ptpa,
       ptpa->hash = ptpa->a_address.un.ip4.s_addr
 	+ ptpa->b_address.un.ip4.s_addr + ptpa->a_port + ptpa->b_port;
     }
-#ifdef SUPPORT_IPV6
   else
     {				/* V6 */
       int i;
@@ -267,33 +182,13 @@ CopyAddr (tcp_pair_addrblock * ptpa,
 	  ptpa->hash += ptpa->b_address.un.ip6.s6_addr[i];
 	}
     }
-#endif
 }
-
 
 
 int
 WhichDir (tcp_pair_addrblock * ptpa1, tcp_pair_addrblock * ptpa2)
 {
 
-#ifdef BROKEN_COMPILER
-  /* sorry for the ugly nested 'if', but a 4-way conjunction broke my */
-  /* Optimizer (under 'gcc version cygnus-2.0.2')                     */
-
-  /* same as first packet */
-  if (IP_SAMEADDR (ptpa1->a_address, ptpa2->a_address))
-    if (IP_SAMEADDR (ptpa1->b_address, ptpa2->b_address))
-      if ((ptpa1->a_port == ptpa2->a_port))
-	if ((ptpa1->b_port == ptpa2->b_port))
-	  return (C2S);
-
-  /* reverse of first packet */
-  if (IP_SAMEADDR (ptpa1->a_address, ptpa2->b_address))
-    if (IP_SAMEADDR (ptpa1->b_address, ptpa2->a_address))
-      if ((ptpa1->a_port == ptpa2->b_port))
-	if ((ptpa1->b_port == ptpa2->a_port))
-	  return (S2C);
-#else /* BROKEN_COMPILER */
   /* same as first packet */
   if (IP_SAMEADDR (ptpa1->a_address, ptpa2->a_address) &&
       IP_SAMEADDR (ptpa1->b_address, ptpa2->b_address) &&
@@ -305,7 +200,6 @@ WhichDir (tcp_pair_addrblock * ptpa1, tcp_pair_addrblock * ptpa2)
       IP_SAMEADDR (ptpa1->b_address, ptpa2->a_address) &&
       (ptpa1->a_port == ptpa2->b_port) && (ptpa1->b_port == ptpa2->a_port))
     return (S2C);
-#endif /* BROKEN_COMPILER */
 
   /* different connection */
   return (0);
@@ -393,26 +287,19 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   ptp->internal_src = internal_src;
   ptp->internal_dst = internal_dst;
 
-  ptp->cloud_src = cloud_src;
-  ptp->cloud_dst = cloud_dst;
-
   if (crypto_src)
    {
-#ifdef SUPPORT_IPV6
      if (ADDR_ISV6(&(ptp->addr_pair.a_address)))
        store_crypto_ipv6(&(ptp->addr_pair.a_address.un.ip6));
      else
-#endif
        store_crypto_ip(&(ptp->addr_pair.a_address.un.ip4));
    }
 
   if (crypto_dst)
    {
-#ifdef SUPPORT_IPV6
      if (ADDR_ISV6(&(ptp->addr_pair.b_address)))
        store_crypto_ipv6(&(ptp->addr_pair.b_address.un.ip6));
      else
-#endif
        store_crypto_ip(&(ptp->addr_pair.b_address.un.ip4));
    }
 
@@ -422,18 +309,13 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   /* Initialize the state */
   ptp->con_type = 0;
   ptp->state = UNKNOWN_TYPE;
-  ptp->p2p_type = 0;
-  ptp->p2p_state = UNKNOWN_TYPE;
-  ptp->ignore_dpi = FALSE;
 
   /* Assume all packets must be dumped */
   ptp->stop_dumping_tcp = FALSE;
 /* DNS cache piece */
   /* Do reverse Lookup */
-#ifdef DNS_CACHE_PROCESSOR
  if (dns_enabled)
   {
-#ifdef SUPPORT_IPV6
     if (PIP_ISV6(pip))
      { 
     struct DNS_data_IPv6* dns_data =  get_dns_entry_ipv6(&(PIP_V6(pip)->ip6_saddr), &(PIP_V6(pip)->ip6_daddr));
@@ -445,21 +327,6 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
 	 ptp->response_time = dns_data->response_time;
 	 ptp->crypto_dns = crypto_ipv6(ptp->dns_server.un.ip6);
      }
-#ifdef SUPPORT_MIXED_DNS
-    else {
-      // Look for a DNS6 query from an equivalent IPv4 addresses
-      struct DNS_data_IPv6* dns_data =  get_dns_entry_ipv6_dns4(&(PIP_V6(pip)->ip6_saddr), &(PIP_V6(pip)->ip6_daddr));
-      if(dns_data!=NULL){
-	 ptp->dns_name = dns_data->hostname;
-	 // The DNS Server was IPv4, stored in the DNSCache IP4->6 format
-	 ptp->dns_server.addr_vers = 4;
-	 ptp->dns_server.un.ip4.s_addr = map_6to4(&(dns_data->dns_server));
-	 ptp->request_time = dns_data->request_time;
-	 ptp->response_time = dns_data->response_time;
-	 ptp->crypto_dns = crypto_ip(ptp->dns_server.un.ip4);
-       }
-    }
-#endif /* SUPPORT_MIXED_DNS */
     if(debug >1)
      {
        fprintf (fp_stdout, "got DNS reverse %s %s ", ptp->dns_name, HostName (ptp->addr_pair.a_address));
@@ -467,7 +334,6 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
      }
      }
     else
-#endif /* SUPPORT_IPV6 */
      {
     struct DNS_data* dns_data =  get_dns_entry(pip->ip_src.s_addr, pip->ip_dst.s_addr);
     if(dns_data!=NULL){
@@ -478,21 +344,6 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
 	 ptp->response_time = dns_data->response_time;
 	 ptp->crypto_dns = crypto_ip(ptp->dns_server.un.ip4);
      }
-#if defined(SUPPORT_IPV6) && defined(SUPPORT_MIXED_DNS)
-    else {
-      // Look for a DNS4 query from an equivalent IPv6 addresses
-      struct DNS_data_IPv6* dns_data =  get_dns_entry_ipv4_dns6(pip->ip_src.s_addr, pip->ip_dst.s_addr);
-      if(dns_data!=NULL){
-	 ptp->dns_name = dns_data->hostname;
-	 // The DNS Server was IPv6
-	 ptp->dns_server.addr_vers = 6;
-	 memcpy((&ptp->dns_server.un.ip6),&(dns_data->dns_server),sizeof(struct in6_addr));
-	 ptp->request_time = dns_data->request_time;
-	 ptp->response_time = dns_data->response_time;
-	 ptp->crypto_dns = crypto_ipv6(ptp->dns_server.un.ip6);
-       }
-    }
-#endif /* SUPPORT_IPV6 && SUPPORT_MIXED_DNS */
     if(debug >1)
      {
        fprintf (fp_stdout, "got DNS reverse %s %s ", ptp->dns_name, HostName (ptp->addr_pair.a_address));
@@ -504,18 +355,7 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   }
  else
   ptp->dns_name = NULL;
-#else
-  ptp->dns_name = NULL;
-  /*
-  ptp->dns_server = NULL;
-  ptp->request_time = NULL;
-  ptp->response_time = NULL;
-  */
-#endif
 
-#ifdef VIDEO_DETAILS
-  memset(&ptp->http_meta,0,sizeof(struct flv_metadata));
-#endif
 
   ptp->http_request_count  = 0;
   ptp->http_response_count = 0;
@@ -537,8 +377,6 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   ptp->ssl_client_data_byte = 0;
   ptp->ssl_server_data_byte = 0;
   
-  ptp->tls_service = TLS_OTHER;
-
   ptp->ssl_client_PSK = FALSE;
   ptp->ssl_server_PSK = FALSE;
   ptp->ssl_client_early_data = FALSE;
@@ -548,10 +386,8 @@ NewTTP_2 (struct ip *pip, struct tcphdr *ptcp)
   ptp->ssl_client_hello_offset = 0;
   ptp->ssl_client_hello_message_len = 0;
   
-  #ifdef LOG_PERIODIC
   // LOG_PERIODIC
   ptp->last_print_time = current_time;
-  #endif //LOG_PERIODIC
 
   return (&ttp[num_tcp_pairs]);
 }
@@ -561,7 +397,6 @@ NewPTPH_2 (void)
 {
   return (ptph_alloc ());
 }
-
 
 
 /* connection records are stored in a hash table.  Buckets are linked	*/
@@ -582,12 +417,6 @@ FindTTP (struct ip *pip, struct tcphdr *ptcp, int *pdir)
   tcp_pair_addrblock tp_in;
   int dir;
   hash hval;
-
-  int prof_curr_clk;
-  struct timeval prof_tm;
-  double prof_curr_tm;
-  struct tms prof_curr_tms;
-  double cpu_sys,cpu_usr;
 
   /* grab the address from this packet */
   CopyAddr (&tp_in, pip, ntohs (ptcp->th_sport), ntohs (ptcp->th_dport));
@@ -647,7 +476,6 @@ FindTTP (struct ip *pip, struct tcphdr *ptcp, int *pdir)
         "** trash TCP packet: it does not belong to any known flows\n");
 	}
       not_id_p++;
-      add_histo (profile_trash, 0);
 
       return (NULL);
     }
@@ -656,36 +484,6 @@ FindTTP (struct ip *pip, struct tcphdr *ptcp, int *pdir)
     {
       fprintf (fp_stdout, "tracing a new TCP flow\n");
     }
-
-    if (profile_cpu -> flag == HISTO_ON) {
-        prof_curr_clk = (int)clock();
-        gettimeofday(&prof_tm, NULL);
-        prof_curr_tm = time2double(prof_tm)/1e6;
-        times(&prof_curr_tms);
-        
-        
-        if (prof_curr_tm - prof_last_tm > PROFILE_IDLE) {
-            /* system cpu */
-            cpu_sys = 1.0 * (prof_curr_tms.tms_stime - prof_last_tms.tms_stime) / prof_cps /
-                  (prof_curr_tm - prof_last_tm) * 100;
-            AVE_new_step(prof_tm, &ave_win_sys_cpu, cpu_sys);
-            // system + user cpu 
-            //cpu = 1.0 * (prof_curr_clk - prof_last_clk) / CLOCKS_PER_SEC / 
-            //      (prof_curr_tm - prof_last_tm) * 100;
-            //AVE_new_step(prof_tm, &ave_win_usrsys_cpu, cpu);
-            cpu_usr = 1.0 * (prof_curr_tms.tms_utime - prof_last_tms.tms_utime) / prof_cps /
-                  (prof_curr_tm - prof_last_tm) * 100;
-            AVE_new_step(prof_tm, &ave_win_usr_cpu, cpu_usr);
-        
-            prof_last_tm = prof_curr_tm;
-            prof_last_clk = prof_curr_clk; 
-            prof_last_tms = prof_curr_tms;
-            max_cpu = (max_cpu < (cpu_usr+cpu_sys)) ? cpu_usr+cpu_sys : max_cpu;
-            //printf("cpu:%.2f max:%.2f\n", cpu, max_cpu);
-        }
-    }
-    
-    
 
   // we fire it at DOUBLE rate, but actually clean only those > TCP_IDLE_TIME
   if (elapsed (last_cleaned, current_time) > GLOBALS.GC_Fire_Time)
@@ -711,16 +509,8 @@ FindTTP (struct ip *pip, struct tcphdr *ptcp, int *pdir)
         "** out of memory when creating flows - considering a not_id_p\n");
 	}
       not_id_p++;
-      add_histo (profile_trash, 0);
-
-    /* profile number of missed TCP session */
-    if (profile_flows->flag == HISTO_ON)
-        AVE_arrival(current_time, &missed_flows_win_TCP);
-
       return (NULL);
     }
-  if (profile_flows->flag == HISTO_ON)
-    AVE_arrival(current_time, &active_flows_win_TCP);
   tot_conn_TCP++;
   ptph = NewPTPH_2 ();
   ptph->ttp_ptr = temp_ttp;
@@ -823,25 +613,19 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
     {
       ++tcp_trace_count_incoming;
     }
-#ifndef LOG_UNKNOWN
   else if (internal_src && internal_dst)
-#else
-  else
-#endif
     {
       ++tcp_trace_count_local;
     }
 
 
   /*MT: log periodic - Do this before updating counters*/
-#ifdef LOG_PERIODIC
     if ( elapsed(ptp_save->last_print_time, current_time) > GLOBALS.Log_Periodic_Interval) {
 
       print_periodic_log(ptp_save);
 
    }
 
-#endif //LOG_PERIODIC
 
   /* do time stats */
   if (ZERO_TIME (&ptp_save->first_time))
@@ -849,7 +633,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       ptp_save->first_time = current_time;
     }
   ptp_save->last_time = current_time;
-
 
 
   /* bug fix:  it's legal to have the same end points reused.  The */
@@ -870,12 +653,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       otherdir = &ptp_save->c2s;
     }
 
-#ifdef CHECK_TCP_DUP
-  /* check if this is a dupe udp */
-  if (dup_tcp_check (pip, ptcp,thisdir)) {
-    return(FLOW_STAT_DUP);
-  }
-#endif
 
   /* calculate data length */
   tcp_length = getpayloadlength (pip, plast);
@@ -899,15 +676,7 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
 
   if ((*dir == C2S) && (!SYN_SET (ptcp)) && (otherdir->syn_count == 0) && tcp_data_length != 0 )
     {
-       ptp_save->ignore_dpi = TRUE;
-    }
-
-#ifndef LOG_HALFDUPLEX
-  if ((*dir == C2S) && (!SYN_SET (ptcp)) && (otherdir->syn_count == 0) && tcp_data_length != 0 )
-    {
       //fprintf (fp_stdout, "  Closing a half duplex flow\n");
-      if (profile_flows->flag == HISTO_ON)
-        AVE_departure(current_time, &active_flows_win_TCP);
       tot_conn_TCP--;
       make_conn_stats (ptp_save,
 		       (ptp_save->s2c.syn_count > 0
@@ -925,7 +694,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
 
       return (FLOW_STAT_OK);
     }
-#endif
 
   if ((ACK_SET (ptcp)) &&
       (otherdir->fin_count >= 1) && (th_ack >= (otherdir->fin_seqno + 1)))
@@ -1097,7 +865,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       if (ZERO_TIME (&thisdir->first_data_time))
 	thisdir->first_data_time = current_time;
       thisdir->last_data_time = current_time;
-
 #ifdef PACKET_STATS
       thisdir->data_pkts_sum2 += tcp_data_length*tcp_data_length; 
       
@@ -1127,71 +894,7 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
 	 thisdir->seg_count++;
       }
 #endif
-#ifdef VIDEO_DETAILS
-      if (ZERO_TIME (&thisdir->rate_last_sample))
-       {
-	 thisdir->rate_last_sample = current_time;
-	 thisdir->rate_left_edge = time2double(current_time);
-	 thisdir->rate_right_edge = thisdir->rate_left_edge+GLOBALS.Rate_Sampling;
-	 thisdir->rate_min=MAXFLOAT;
-	 thisdir->rate_max=0.0;
-	 thisdir->rate_bytes=0;
-	 thisdir->rate_empty_streak=0;
-       }
 
-      if ( time2double(current_time) < thisdir->rate_right_edge)
-       {
-	 thisdir->rate_bytes += tcp_data_length;
-       }
-      else
-       {
-         double sample;
-	 int streak=0;
-
-	 sample = thisdir->rate_bytes *1e6 / GLOBALS.Rate_Sampling;
-
-	 if (thisdir->rate_min>sample) 
-	   thisdir->rate_min = sample;
-	 if (thisdir->rate_max<sample) 
-	   thisdir->rate_max = sample;
-	   
-	 thisdir->rate_sum += sample;
-	 thisdir->rate_sum2 += sample*sample;
- 	 if (thisdir->rate_samples<10)
-	  {
-	    thisdir->rate_begin_bytes[thisdir->rate_samples] = thisdir->rate_bytes;
-	  }
-
-	 thisdir->rate_samples++;
-         if (thisdir->rate_bytes==0)
-	   {
-	     thisdir->rate_empty_samples++;
-	     streak++;
-	   }
-
-	 thisdir->rate_left_edge +=  GLOBALS.Rate_Sampling;
-	 thisdir->rate_right_edge +=  GLOBALS.Rate_Sampling;
-
-         while (time2double(current_time) >= thisdir->rate_right_edge)
-	  {
- 	    thisdir->rate_left_edge +=  GLOBALS.Rate_Sampling;
-	    thisdir->rate_right_edge +=  GLOBALS.Rate_Sampling;
- 	    if (thisdir->rate_samples<10)
-	     {
-	      thisdir->rate_begin_bytes[thisdir->rate_samples] = 0;
-	     }
-	    thisdir->rate_samples++;
-	    thisdir->rate_empty_samples++;
-	    streak++;
-	  }
-	 
-	 if (streak > thisdir->rate_empty_streak)
-	  thisdir->rate_empty_streak = streak;
-
-	 thisdir->rate_last_sample = current_time;
-	 thisdir->rate_bytes = tcp_data_length;
-       }
-#endif
 
     }
 
@@ -1332,15 +1035,12 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       if (thisdir != NULL && thisdir->ptp != NULL)
        {
 	    make_tcpL7_rate_stats(thisdir->ptp, ip_len);
-        make_videoL7_rate_stats(thisdir->ptp, ip_len);
        }
       /* */
       
       if (ConnReset (ptp_save))
 	{
 	  //fprintf (fp_stdout, "  (new reset)\n");
-      if (profile_flows->flag == HISTO_ON)
-        AVE_departure(current_time, &active_flows_win_TCP);
 	  tot_conn_TCP--;
 	  make_conn_stats (ptp_save,
 			   (ptp_save->s2c.syn_count > 0
@@ -1453,14 +1153,12 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
       if ((int32_t) cwin > 0 && ((thisdir->cwin_min == 0) || (cwin < thisdir->cwin_min)))
 	thisdir->cwin_min = cwin;
        
-    #ifdef LOG_PERIODIC
       if ((int32_t) cwin > 0 && cwin > thisdir->cwin_max_periodic ) {
 	    thisdir->cwin_max_periodic = cwin;
         }
       if ((int32_t) cwin > 0 && ((thisdir->cwin_min_periodic == 0) || (cwin < thisdir->cwin_min_periodic))){
 	    thisdir->cwin_min_periodic = cwin;
         }
-    #endif
 
     }
 
@@ -1490,7 +1188,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
   if (thisdir != NULL && thisdir->ptp != NULL)
    {
      make_tcpL7_rate_stats(thisdir->ptp, ip_len);
-     make_videoL7_rate_stats(thisdir->ptp, ip_len);
    }
   
 
@@ -1499,8 +1196,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
   if (ConnComplete (ptp_save))
     {
       //fprintf (fp_stdout, "  (new complete)\n");
-      if (profile_flows->flag == HISTO_ON)
-        AVE_departure(current_time, &active_flows_win_TCP);
       tot_conn_TCP--;
       make_conn_stats (ptp_save, TRUE);
 
@@ -1521,20 +1216,6 @@ tcp_flow_stat (struct ip * pip, struct tcphdr * ptcp, void *plast, int *dir)
   return (FLOW_STAT_OK);
 }
 
-void
-print_ttp ()
-{
-  int p;
-
-  for (p = 0; p < GLOBALS.Max_TCP_Pairs; p++)
-    {
-      fprintf (fp_stdout, "[%2d]", p);
-      if (ttp[p] != NULL)
-	fprintf (fp_stdout, "->[ptp]\n");
-      else
-	fprintf (fp_stdout, "->[NULL]\n");
-    }
-}
 
 void
 trace_done (void)
@@ -1550,7 +1231,6 @@ trace_done (void)
       if (ptp == NULL)
 	continue;
 
-#ifdef WIPE_TCP_SINGLETONS
       if (( (
              (
 	      (ptp->c2s.syn_count>0 && ptp->s2c.syn_count==0)
@@ -1567,9 +1247,6 @@ trace_done (void)
 	  )
 	  ||
           (elapsed (ptp->last_time, current_time) > GLOBALS.TCP_Idle_Time))
-#else
-      if ((elapsed (ptp->last_time, current_time) > GLOBALS.TCP_Idle_Time))
-#endif
 	{
 	  
 	  make_conn_stats (ptp, (ptp->s2c.syn_count > 0)
@@ -1624,7 +1301,6 @@ trace_done_periodic ()
 
       /* If no packets have been received in the last IDLE_TIME period,
          close the flow */
-#ifdef WIPE_TCP_SINGLETONS
       if (( (
              (
 	      (ptp->c2s.syn_count>0 && ptp->s2c.syn_count==0)
@@ -1641,9 +1317,6 @@ trace_done_periodic ()
 	  )
 	  ||
           (elapsed (ptp->last_time, current_time) > GLOBALS.TCP_Idle_Time))
-#else
-      if ((elapsed (ptp->last_time, current_time) > GLOBALS.TCP_Idle_Time))
-#endif
 	{
 	  /* must be cleaned */
 	  //tcp_cleaned++;
@@ -1651,8 +1324,6 @@ trace_done_periodic ()
 	  make_conn_stats (ptp, (ptp->s2c.syn_count > 0)
 			   && (ptp->c2s.syn_count > 0));
 
-      if (profile_flows->flag == HISTO_ON)
-        AVE_departure(current_time, &active_flows_win_TCP);
 	  tot_conn_TCP--;
 
 	  /* free up hash element->.. */
@@ -1716,7 +1387,6 @@ trace_done_periodic ()
 
       /* If no packets have been received in the last UDP_IDLE_TIME period,
          close the flow */
-#ifdef WIPE_UDP_SINGLETONS
       if (( (pup->packets == 1) && 
 	    (elapsed (pup->last_time, current_time) > GLOBALS.UDP_Singleton_Time)
 	  )
@@ -1726,13 +1396,6 @@ trace_done_periodic ()
 	   close_udp_flow (pup, ix, dir);
            udp_cleaned++;
 	}
-#else
-      if ((elapsed (pup->last_time, current_time) > GLOBALS.UDP_Idle_Time))
-	{
-	   close_udp_flow (pup, ix, dir);
-           udp_cleaned++;
-	}
-#endif
 
     }
 
@@ -1763,10 +1426,6 @@ trace_init (void)
 
   /* create an array to hold any pairs that we might create */
   ttp = (tcp_pair **) MallocZ (GLOBALS.Max_TCP_Pairs * sizeof (tcp_pair *));
-
-  init_ssl_youtube_patterns();
-
-  Minit ();
 }
 
 
@@ -1990,273 +1649,6 @@ ParseOptions: packet %lu %s option truncated, skipping other options\n", \
 }
 
 
-/* given a tcp_pair and a packet, tell me which tcb it is */
-struct tcb *
-ptp2ptcb (tcp_pair * ptp, struct ip *pip, struct tcphdr *ptcp)
-{
-  int dir = 0;
-  tcp_pair tp_in;
-
-  /* grab the address from this packet */
-  CopyAddr (&tp_in.addr_pair, pip,
-	    ntohs (ptcp->th_sport), ntohs (ptcp->th_dport));
-
-  /* check the direction */
-  if (!SameConn (&tp_in.addr_pair, &ptp->addr_pair, &dir))
-    return (NULL);		/* not found, internal error */
-
-  if (dir == C2S)
-    return (&ptp->c2s);
-  else
-    return (&ptp->s2c);
-}
-
-
-/*------------------------------------------------------------------------
- *  cksum  -  Return 16-bit ones complement of 16-bit ones complement sum 
- *------------------------------------------------------------------------
- */
-static u_short
-cksum (void *pvoid,		/* any alignment is legal */
-       int nbytes)
-{
-  u_char *pchar = pvoid;
-  u_long sum = 0;
-
-  while (nbytes >= 2)
-    {
-      /* can't assume pointer alignment :-( */
-      sum += (pchar[0] << 8);
-      sum += pchar[1];
-
-      pchar += 2;
-      nbytes -= 2;
-    }
-
-  /* special check for odd length */
-  if (nbytes == 1)
-    {
-      sum += (pchar[0] << 8);
-      /* lower byte is assumed to be 0 */
-    }
-
-  sum = (sum >> 16) + (sum & 0xffff);	/* add in carry   */
-  sum += (sum >> 16);		/* maybe one more */
-
-  return (sum);
-}
-
-/* compute IP checksum */
-static u_short
-ip_cksum (struct ip *pip, void *plast)
-{
-  u_short sum;
-
-#ifdef SUPPORT_IPV6
-  if (PIP_ISV6 (pip))
-    return (0);			/* IPv6 has no header checksum */
-#endif
-  if (!PIP_ISV4 (pip))
-    return (1);			/* I have no idea! */
-
-
-  /* quick sanity check, if the packet is truncated, pretend it's valid */
-  if (plast < (void *) ((char *) pip + pip->ip_hl * 4 - 1))
-    {
-      return (0);
-    }
-
-  /* ... else IPv4 */
-  sum = cksum (pip, pip->ip_hl * 4);
-  return (sum);
-}
-
-
-/* is the IP checksum valid? */
-Bool
-ip_cksum_valid (struct ip * pip, void *plast)
-{
-  u_short sum;
-
-  sum = ip_cksum (pip, plast);
-
-  return ((sum == 0) || (sum == 0xffff));
-}
-
-
-/* compute the TCP checksum */
-static u_short
-tcp_cksum (struct ip *pip, struct tcphdr *ptcp, void *plast)
-{
-  u_long sum = 0;
-  unsigned tcp_length;
-
-  /* verify version */
-  if (!PIP_ISV4 (pip) && !PIP_ISV6 (pip))
-    {
-      fprintf (fp_stderr, "Internal error, tcp_cksum: neither IPv4 nor IPv6\n");
-      exit (-1);
-    }
-
-
-  /* TCP checksum includes: */
-  /* - IP source */
-  /* - IP dest */
-  /* - IP type */
-  /* - TCP header length + TCP data length */
-  /* - TCP header and data */
-
-  if (PIP_ISV4 (pip))
-    {
-      /* quick sanity check, if the packet is fragmented,
-         pretend it's valid */
-      if ((ntohs (pip->ip_off) << 2) != 0)
-	{
-	  /* both the offset AND the MF bit must be 0 */
-	  /* (but we shifted off the DF bit */
-	  return (0);
-	}
-
-      /* 2 4-byte numbers, next to each other */
-      sum += cksum (&pip->ip_src, 4 * 2);
-
-      /* type */
-      sum += (u_short) pip->ip_p;
-
-      /* length (TCP header length + TCP data length) */
-      tcp_length = ntohs (pip->ip_len) - (4 * pip->ip_hl);
-      sum += (u_short) htons (tcp_length);
-    }
-#ifdef SUPPORT_IPV6
-  else
-    {				/* if (PIP_ISV6(pip)) */
-
-      static Bool warned = FALSE;
-
-      /* wow, this gets ugly with pseudo headers, sounds like a good
-         job for another day :-(  */
-
-      if (!warned)
-	{
-	  fprintf (fp_stderr, "\nWarning: IPv6 TCP checksums not verified\n\n");
-	  warned = TRUE;
-	}
-      return (0);		/* pretend it's valid */
-    }
-#endif
-
-  /* quick sanity check, if the packet is truncated, pretend it's valid */
-  if (plast < (void *) ((char *) ptcp + tcp_length - 1))
-    {
-      return (0);
-    }
-
-
-  /* checksum the TCP header and data */
-  sum += cksum (ptcp, tcp_length);
-
-  /* roll down into a 16-bit number */
-  sum = (sum >> 16) + (sum & 0xffff);
-  sum += (sum >> 16);
-
-  return (u_short) (~sum & 0xffff);
-}
-
-
-
-/* compute the UDP checksum */
-static u_short
-udp_cksum (struct ip *pip, struct udphdr *pudp, void *plast)
-{
-  u_long sum = 0;
-  unsigned udp_length;
-
-  /* WARNING -- this routine has not been extensively tested */
-
-  /* verify version */
-  if (!PIP_ISV4 (pip) && !PIP_ISV6 (pip))
-    {
-      fprintf (fp_stderr, "Internal error, udp_cksum: neither IPv4 nor IPv6\n");
-      exit (-1);
-    }
-
-
-  /* UDP checksum includes: */
-  /* - IP source */
-  /* - IP dest */
-  /* - IP type */
-  /* - UDP length field */
-  /* - UDP header and data */
-
-  if (PIP_ISV4 (pip))
-    {
-      /* 2 4-byte numbers, next to each other */
-      sum += cksum (&pip->ip_src, 4 * 2);
-
-      /* type */
-      sum += (u_short) pip->ip_p;
-
-      /* UDP length */
-      udp_length = ntohs (pudp->uh_ulen);
-      sum += pudp->uh_ulen;
-    }
-#ifdef SUPPORT_IPV6
-  else
-    {				/* if (PIP_ISV6(pip)) */
-
-      static Bool warned = FALSE;
-
-      /* wow, this gets ugly with pseudo headers, sounds like a good
-         job for another day :-(  */
-
-      if (!warned)
-	{
-	  fprintf (fp_stderr, "\nWarning: IPv6 UDP checksums not verified\n\n");
-	  warned = TRUE;
-	}
-      return (0);		/* pretend it's valid */
-    }
-#endif
-
-  /* quick sanity check, if the packet is truncated, pretend it's valid */
-  if (plast < (void *) ((char *) pudp + udp_length - 1))
-    {
-      return (0);
-    }
-
-
-  /* checksum the UDP header and data */
-  sum += cksum (pudp, udp_length);
-
-  /* roll down into a 16-bit number */
-  sum = (sum >> 16) + (sum & 0xffff);
-  sum += (sum >> 16);
-
-  return (u_short) (~sum & 0xffff);
-}
-
-
-/* is the TCP checksum valid? */
-Bool
-tcp_cksum_valid (struct ip * pip, struct tcphdr * ptcp, void *plast)
-{
-  return (tcp_cksum (pip, ptcp, plast) == 0);
-}
-
-
-/* is the UDP checksum valid? */
-Bool
-udp_cksum_valid (struct ip * pip, struct udphdr * pudp, void *plast)
-{
-  if (ntohs (pudp->uh_sum) == 0)
-    {
-      /* checksum not used */
-      return (1);		/* valid */
-    }
-
-  return (udp_cksum (pip, pudp, plast) == 0);
-}
-
 /*
 ** Functions to print selected groups of TCP measurements
 */
@@ -2362,17 +1754,6 @@ void print_tcp_stats_core(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
   /* TOPIX: added 97th column: connection type */
   wfprintf (fp, " %d", ptp_save->con_type);
 
-  /* P2P: added 98-99th column: p2p protocol / p2p message type /  */
-  wfprintf (fp, " %d", ptp_save->p2p_type / 100);
-
-  /* Web2.0: added 105th column: HTTP content type */
-  /* 
-     Using http_data+1 so that valid values are > 0, i.e. GET is 1,
-     POST is 2, etc.
-  */
-  wfprintf (fp, " %d", ptp_save->con_type & HTTP_PROTOCOL ?
-  		       ptp_save->http_data + 1 : 0 );
-
 /* End of the Core TCP set */
 }
 
@@ -2401,21 +1782,6 @@ void print_tcp_stats_e2e(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
    	   ptp_save->s2c.rtt_count,
  	   ptp_save->s2c.ttl_min,
  	   ptp_save->s2c.ttl_max);
-}
-
-void print_tcp_stats_p2p(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  /* P2P: added 98-99th column: p2p protocol / p2p message type /  */
-  wfprintf (fp, " %d", ptp_save->p2p_type % 100);
-
-  /* P2P: added 100-103th column: p2p data mesg. / p2p signalling msg.   */
-  /*	  currently only for ED2K-TCP - MMM 7/3/08*/
-  wfprintf (fp, " %d %d %d %d", ptp_save->p2p_data_count,
-    	   ptp_save->p2p_sig_count,ptp_save->p2p_c2s_count,ptp_save->p2p_c2c_count);
-
-  /* P2P: added 104th column: p2p chat mesg. count */
-  /*	  currently only for ED2K-TCP - MMM 5/6/08*/
-  wfprintf (fp, " %d", ptp_save->p2p_msg_count);
 }
 
 void print_tcp_stats_options(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
@@ -2481,14 +1847,6 @@ void print_tcp_stats_advanced(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba,
                               u_long pab_expected, u_long pba_expected)
 {
   /* write to log file */
-  /* printing boolean flag if this is considered internal or not */
-  // wfprintf (fp, " %d", ptp_save->cloud_src);
-  // wfprintf (fp, " %d", ptp_save->cloud_dst);
-
-#ifdef LOST_PACKET_STAT
-/* Expected unique bytes (from sequence numbers) used to detect missing packets */
-  wfprintf (fp, " %u %u", pab_expected, pba_expected);
-#endif
 
 #ifdef PACKET_STATS
   {
@@ -2556,12 +1914,6 @@ void print_tcp_stats_advanced(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba,
      			   ptp_save->s2c.data_pkts_push);
   }
 #endif
-
-#ifdef ENABLE_LOG_MPTCP
-  /* MPTCP usage */
-  wfprintf (fp," %d %d",ptp_save->c2s.mptcp_req, ptp_save->s2c.mptcp_req);
-#endif
-
 }
 
 void print_tcp_stats_layer7(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
@@ -2628,11 +1980,6 @@ void print_tcp_stats_layer7(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
   wfprintf(fp," %lu",(ptp_save->ssl_server_data_seen?
                      (ptp_save->ssl_server_data_byte) : 0L));
 
-  #ifdef SNOOP_DROPBOX
-  wfprintf(fp," %s",(ptp_save->con_type & HTTP_PROTOCOL) && 
-                    (ptp_save->http_data==HTTP_DROPBOX) ? (strict_privacy ? "XXX" : ptp_save->http_ytid) :"-");
-#endif
-#ifdef DNS_CACHE_PROCESSOR
   if (ptp_save->dns_name!=NULL)
    {
      wfprintf(fp, " %s",StringEncryptedBase64(ptp_save->dns_name));
@@ -2650,7 +1997,6 @@ void print_tcp_stats_layer7(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
    {
      wfprintf(fp, " - - 0.0 0.0");
    }
-#endif
   /* first collected HTTP hostname (from Host:), if any */
   wfprintf(fp," %s",ptp_save->http_hostname!=NULL?StringEncryptedBase64(ptp_save->http_hostname):"-");
 
@@ -2658,7 +2004,6 @@ void print_tcp_stats_layer7(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
   wfprintf(fp," %s",ptp_save->ssl_client_tls_version!=NULL?ptp_save->ssl_client_tls_version:"-");
   wfprintf(fp," %s",ptp_save->ssl_server_tls_version!=NULL?ptp_save->ssl_server_tls_version:"-");
 
-  #ifdef DNS_CACHE_PROCESSOR
   // Additional column to indicate if the DNS server address is encrypted
   if (ptp_save->dns_name!=NULL && ptp_save->crypto_dns!=FALSE)
    {
@@ -2667,204 +2012,6 @@ void print_tcp_stats_layer7(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
   else
    {
      wfprintf(fp, " 0");
-   }
-#endif
-
-  
- /*  Uncomment if we need to trace which TLS connections are popular and not classified */
-//  wfprintf(fp," %d",(ptp_save->tls_service); 
-
-}
-
-void print_video_stats_core(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  char id_string[20];
-
-  /* Streaming : 75th column : Classification based on Content Type */
-
-  wfprintf(fp, " %d", ptp_save->streaming.video_content_type);
-
-  /* Streaming : 76th column : Classification based on Payload signature */
-  wfprintf(fp, " %d", ptp_save->streaming.video_payload_type);
-
-  /* Video ID16/46 */
-
-  if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-     	     ( ptp_save->http_data==HTTP_YOUTUBE_VIDEO ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_VIDEO204 ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_204 ))
-   {
-     if (strlen(ptp_save->http_ytid)==11)
-      {
-	/* Some YouTube HLS flows use the ID11 in the request */
-	id11to16(id_string, ptp_save->http_ytid);
-	wfprintf(fp, " %s", (strict_privacy ? "XXX" : id_string));
-      }
-     else
-      {
-        /* This is both good for ID16 and ID46 */
-        wfprintf(fp, " %s", (strict_privacy ? "XXX" : ptp_save->http_ytid));
-      }
-   }
-  else if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-     	     ( ptp_save->http_data==HTTP_YOUTUBE_SITE ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_SITE_DIRECT ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_SITE_EMBED ))
-   {
-     id11to16(id_string,ptp_save->http_ytid);
-     wfprintf (fp, " %s", (strict_privacy ? "XXX" : id_string));
-   }
-  else			 
-   {
-     wfprintf (fp, " --");
-   }
-
-   /* YouTube Format */
-
-  if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-             ( ptp_save->http_data==HTTP_YOUTUBE_VIDEO ||
-               ptp_save->http_data==HTTP_YOUTUBE_VIDEO204 ||
-               ptp_save->http_data==HTTP_YOUTUBE_204  )
-	 )
-   {
-     wfprintf (fp, " %s", ptp_save->http_ytitag);
-   }
-  else
-   {
-     wfprintf (fp, " --");
-   }
-
-}
-
-void print_video_stats_info(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  /* Streaming : 77th column : Video Duration*/
-  wfprintf(fp, " %f", ptp_save->streaming.metadata.duration);
-
-  /* Streaming : 78th column : Overall Video Bitrate*/
-  wfprintf(fp, " %f", ptp_save->streaming.metadata.videodatarate);
-
-  /* Streaming : 79th column : Video Width*/
-  wfprintf(fp, " %d", ptp_save->streaming.metadata.width);
-
-  /* Streaming : 80th column : Video Height*/
-  wfprintf(fp, " %d", ptp_save->streaming.metadata.height);
-
-}
-
-void print_video_stats_youtube(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  char id_string[20];
-
-  /* ID11 */
-  if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-     	     ( ptp_save->http_data==HTTP_YOUTUBE_VIDEO ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_VIDEO204 ||
-     	       ptp_save->http_data==HTTP_YOUTUBE_204 ))
-   {
-     if (strlen(ptp_save->http_ytid)==11)
-      {
-	/* Some YouTube HLS flows use the ID11 in the request */
-	wfprintf(fp, " %s", (strict_privacy ? "XXX" : ptp_save->http_ytid));
-      }
-     else
-      {
-        /* This is both good for ID16 and ID46 */
-        id16to11(id_string, ptp_save->http_ytid);
-        wfprintf(fp, " %s", (strict_privacy ? "XXX" : id_string));
-      }
-   }
-  else if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-     	       ( ptp_save->http_data==HTTP_YOUTUBE_SITE ||
-     		 ptp_save->http_data==HTTP_YOUTUBE_SITE_DIRECT ||
-     		 ptp_save->http_data==HTTP_YOUTUBE_SITE_EMBED ))
-   {
-     wfprintf (fp, " %s", (strict_privacy ? "XXX" : ptp_save->http_ytid));
-   }
-  else			 
-   {
-     wfprintf (fp, " --");
-   }
-
-  /* Other YouTube info */
-
-  if ((ptp_save->con_type & HTTP_PROTOCOL) && 
-             ( ptp_save->http_data==HTTP_YOUTUBE_VIDEO ||
-               ptp_save->http_data==HTTP_YOUTUBE_VIDEO204 ||
-               ptp_save->http_data==HTTP_YOUTUBE_204  ))
-   {
-     wfprintf (fp, " %d %d %d %d %d", 
-				 ptp_save->http_ytseek,
-				 ptp_save->http_ytredir_mode,
-				 ptp_save->http_ytredir_count,
-				 ptp_save->http_ytmobile,
-				 ptp_save->http_ytstream );
-   }
-  else
-   {
-     wfprintf (fp, " 0 0 0 0 0");
-   }
-
-}
-
-void print_video_stats_advanced(FILE *fp, tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  int i;
-
-  /* Rate c2s */
-  if (ptp_save->c2s.rate_samples > 1)
-   {
-     wfprintf (fp, " %d %d %d %.3f %.3f %.3f %.3f",
-  		    ptp_save->c2s.rate_samples, 				   
-  		    ptp_save->c2s.rate_empty_samples,				   
-    		    ptp_save->c2s.rate_empty_streak,
-  		    8e-3*ptp_save->c2s.rate_sum/ptp_save->c2s.rate_samples,	   
-  		    8e-3*sqrt((ptp_save->c2s.rate_sum2 - 
-  			       ptp_save->c2s.rate_sum*ptp_save->c2s.rate_sum/ptp_save->c2s.rate_samples)/
-  			       (ptp_save->c2s.rate_samples-1)),
-  		    8e-3*ptp_save->c2s.rate_min,
-  		    8e-3*ptp_save->c2s.rate_max);
-   }
-  else
-   {
-     wfprintf (fp, " 0 0 0 0.000 0.000 0.000 0.000");
-   }
-
-  /* Rate s2c */
-  if (ptp_save->s2c.rate_samples > 1 )
-   {
-     wfprintf (fp, " %d %d %d %.3f %.3f %.3f %.3f",
-  		    ptp_save->s2c.rate_samples, 				   
-  		    ptp_save->s2c.rate_empty_samples,
-    		    ptp_save->s2c.rate_empty_streak,
-  		    8e-3*ptp_save->s2c.rate_sum/ptp_save->s2c.rate_samples,	   
-  		    8e-3*sqrt((ptp_save->s2c.rate_sum2 - 
-  			       ptp_save->s2c.rate_sum*ptp_save->s2c.rate_sum/ptp_save->s2c.rate_samples)/
-  			       (ptp_save->s2c.rate_samples-1)),
-  		    8e-3*ptp_save->s2c.rate_min,
-  		    8e-3*ptp_save->s2c.rate_max);
-   }
-  else
-   {
-     wfprintf (fp, " 0 0 0 0.000 0.000 0.000 0.000");
-   }
-
-  /* write to log file */
-
-  for (i=0;i<10;i++)
-   {
-     wfprintf (fp, " %d",ptp_save->c2s.rate_begin_bytes[i]);
-   }
-
-  for (i=0;i<10;i++)
-   {
-     wfprintf (fp, " %d",ptp_save->s2c.rate_begin_bytes[i]);
-   }
-
-  wfprintf (fp, " %d",ptp_save->s2c.msg_count);
-  for (i=0;i<MAX_COUNT_MESSAGES;i++)
-   {
-     wfprintf (fp, " %d",ptp_save->s2c.msg_size[i]);
    }
 
 }
@@ -2880,124 +2027,9 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
   tcb *pab, *pba;
   u_long pab_expected, pba_expected;
 
-   /* Statistichs about CHAT flows */
-   tcp_cleaned ++;
+  tcp_cleaned ++;
 
-  /* Statistichs about CHAT flows */
-#ifdef MSN_CLASSIFIER
-  print_msn_conn_stats(ptp_save);
-#endif
-#ifdef YMSG_CLASSIFIER
-  print_ymsg_conn_stats(ptp_save);
-#endif
-#ifdef XMPP_CLASSIFIER
-  print_jabber_conn_stats(ptp_save);
-#endif
-
-#ifdef VIDEO_DETAILS
- if (!ZERO_TIME (&(ptp_save->c2s.rate_last_sample)))
-  {
-    double sample;
-    double delta;
-    int streak=0;
-
-    delta = time2double(current_time)-ptp_save->c2s.rate_left_edge;
-    if (delta < GLOBALS.Rate_Sampling )
-       sample = ptp_save->c2s.rate_bytes * 1e6 / delta;
-    else
-       sample = ptp_save->c2s.rate_bytes * 1e6 / GLOBALS.Rate_Sampling;
-
-    if (ptp_save->c2s.rate_min>sample) 
-      ptp_save->c2s.rate_min = sample;
-    if (ptp_save->c2s.rate_max<sample) 
-      ptp_save->c2s.rate_max = sample;
-      
-    ptp_save->c2s.rate_sum += sample;
-    ptp_save->c2s.rate_sum2 += sample*sample;
-    if (ptp_save->c2s.rate_samples<10)
-     {
-       ptp_save->c2s.rate_begin_bytes[ptp_save->c2s.rate_samples] = ptp_save->c2s.rate_bytes;
-     }
-    ptp_save->c2s.rate_samples++;
-    if (ptp_save->c2s.rate_bytes==0)
-     {
-       ptp_save->c2s.rate_empty_samples++;
-       streak++;
-     }
-
-    ptp_save->c2s.rate_left_edge +=  GLOBALS.Rate_Sampling;
-    ptp_save->c2s.rate_right_edge +=  GLOBALS.Rate_Sampling;
-
-    while (time2double(current_time) >= ptp_save->c2s.rate_right_edge)
-     {
-       ptp_save->c2s.rate_left_edge +=  GLOBALS.Rate_Sampling;
-       ptp_save->c2s.rate_right_edge +=  GLOBALS.Rate_Sampling;
-       if (ptp_save->c2s.rate_samples<10)
-        {
-          ptp_save->c2s.rate_begin_bytes[ptp_save->c2s.rate_samples] = 0;
-        }
-       ptp_save->c2s.rate_samples++;
-       ptp_save->c2s.rate_empty_samples++;
-       streak++;
-     }
-     
-    if (streak > ptp_save->c2s.rate_empty_streak)
-      ptp_save->c2s.rate_empty_streak = streak;
-  }
- if (!ZERO_TIME (&(ptp_save->s2c.rate_last_sample)))
-  {
-    double sample;
-    double delta;
-    int streak=0;
-
-    delta = time2double(current_time)-ptp_save->s2c.rate_left_edge;
-    if (delta < GLOBALS.Rate_Sampling )
-       sample = ptp_save->s2c.rate_bytes * 1e6 / delta;
-    else
-       sample = ptp_save->s2c.rate_bytes * 1e6 / GLOBALS.Rate_Sampling;
-
-    if (ptp_save->s2c.rate_min>sample) 
-      ptp_save->s2c.rate_min = sample;
-    if (ptp_save->s2c.rate_max<sample) 
-      ptp_save->s2c.rate_max = sample;
-      
-    ptp_save->s2c.rate_sum += sample;
-    ptp_save->s2c.rate_sum2 += sample*sample;
-    if (ptp_save->s2c.rate_samples<10)
-     {
-       ptp_save->s2c.rate_begin_bytes[ptp_save->s2c.rate_samples] = ptp_save->s2c.rate_bytes;
-     }
-    ptp_save->s2c.rate_samples++;
-    if (ptp_save->s2c.rate_bytes==0)
-     {
-       ptp_save->s2c.rate_empty_samples++;
-       streak++;
-     }
-
-    ptp_save->s2c.rate_left_edge +=  GLOBALS.Rate_Sampling;
-    ptp_save->s2c.rate_right_edge +=  GLOBALS.Rate_Sampling;
-
-    while (time2double(current_time) >= ptp_save->s2c.rate_right_edge)
-     {
-       ptp_save->s2c.rate_left_edge +=  GLOBALS.Rate_Sampling;
-       ptp_save->s2c.rate_right_edge +=  GLOBALS.Rate_Sampling;
-       if (ptp_save->s2c.rate_samples<10)
-        {
-          ptp_save->s2c.rate_begin_bytes[ptp_save->s2c.rate_samples] = 0;
-        }
-       ptp_save->s2c.rate_samples++;
-       ptp_save->s2c.rate_empty_samples++;
-       streak++;
-     }
-
-    if (streak > ptp_save->c2s.rate_empty_streak)
-      ptp_save->c2s.rate_empty_streak = streak;
-  }
-#endif
-
-  #ifdef LOG_PERIODIC
   print_periodic_log(ptp_save);
-  #endif //LOG_PERIODIC
 
   /* Statistics from the plugins */
 
@@ -3043,15 +2075,7 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 	  fprintf (fp_stderr, " dst - %s!\n", HostName (ptp_save->addr_pair.b_address));
 	  warn_IN_OUT = FALSE;
 	}
-#ifndef LOG_UNKNOWN
       return;
-#else
-/* fool the internal and external definition... */
-      outgoing = &(ptp_save->s2c);
-      incoming = &(ptp_save->c2s);
-      // local = FALSE;
-      local = TRUE;
-#endif
     }
 
 
@@ -3258,24 +2282,6 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 	      add_histo (tcp_rtt_avg_in,
 			 (Average (incoming->rtt_sum, incoming->rtt_count) /
 			  1000.0));
-	      if (ptp_save->cloud_src || ptp_save->cloud_dst)
-	       {
-	         add_histo (tcp_rtt_c_avg_out,
-	        	 (Average (outgoing->rtt_sum, outgoing->rtt_count) /
-	        	  1000.0));
-	         add_histo (tcp_rtt_c_avg_in,
-	        	 (Average (incoming->rtt_sum, incoming->rtt_count) /
-	        	  1000.0));
-	       }
-	      else
-	       {
-	         add_histo (tcp_rtt_nc_avg_out,
-	        	 (Average (outgoing->rtt_sum, outgoing->rtt_count) /
-	        	  1000.0));
-	         add_histo (tcp_rtt_nc_avg_in,
-	        	 (Average (incoming->rtt_sum, incoming->rtt_count) /
-	        	  1000.0));
-	       }
 
 	      /* min */
 	      add_histo (tcp_rtt_min_out, (outgoing->rtt_min / 1000.0));
@@ -3439,7 +2445,6 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
     }
 
 
-
   /* connection time and throughput */
   /* from microseconds to ms */
   etime = elapsed (ptp_save->first_time, ptp_save->last_time);
@@ -3463,14 +2468,6 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 	 if ( ptp_save->c2s.unique_bytes >= 1000000)
 	  {
 	    add_histo (tcp_thru_lf_c2s, thru);
-	    if (ptp_save->cloud_src || ptp_save->cloud_dst)
-	     {
-	       add_histo (tcp_thru_lf_c_c2s, thru);
-	     }
-	    else
-	     {
-	       add_histo (tcp_thru_lf_nc_c2s, thru);
-	     }
 	  }
        }
 
@@ -3486,65 +2483,10 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 	 if ( ptp_save->s2c.unique_bytes >= 1000000)
 	  {
 	    add_histo (tcp_thru_lf_s2c, thru);
-	    if (ptp_save->cloud_src || ptp_save->cloud_dst)
-	     {
-	       add_histo (tcp_thru_lf_c_s2c, thru);
-	     }
-	    else
-	     {
-	       add_histo (tcp_thru_lf_nc_s2c, thru);
-	     }
 	  }
        }
     }
 
-  if (complete)
-   {
-     u_long missing_bytes = 0;
-
-    /*
-      Counting the amount of bytes missing in the measured TCP flow, due to packets 
-      not seen by the probe and/or tstat.
-
-      pab_expected is the expected size of the TCP flow, computed above using
-      the sequence numbers in the SYN and FIN packets.
-      Due to multiple impredictable issues (packet reordering, flow reuse, buggy TCP 
-      implementation), its value might be HUGELY off, so we need a heuristic to 
-      exclude those situations from our measure.
-
-      We suppose that the computed expected bytes are 'meaningful' if:
-       - either no data packets (only SYN, FIN and ACK) are seen but the missing volume is
-         small (1 MB);
-       - or some data packets were seen, and the missing volume is smaller than 10 times 
-         the maximum volume representable by the seen data packets (i.e. I miss less than
-	 the 90% of the data)
-    */ 
-
-    if (pab_expected > pab->unique_bytes)
-      {
-      // printf("C -> S: %d %lu %lu %lu %lu\n",pab->bad_behavior,pab_expected-pab->unique_bytes,pab_expected,pab->unique_bytes,pab->data_pkts);
-        if (!((pab->data_pkts == 0 && pab_expected > 1e6) ||
-              (pab->data_pkts > 0 && pab_expected > 1500*10*pab->data_pkts))
-    	   )
-    	 missing_bytes += pab_expected - pab->unique_bytes;
-      }
-    if (pba_expected > pba->unique_bytes)
-      {
-     //  printf("S -> C: %d %lu %lu %lu %lu\n",pba->bad_behavior,pba_expected-pba->unique_bytes,pba_expected,pba->unique_bytes,pba->data_pkts);
-        if (!((pba->data_pkts == 0 && pba_expected > 1e6) ||
-              (pba->data_pkts > 0 && pba_expected > 1500*10*pba->data_pkts))
-    	   )
-    	 missing_bytes += pba_expected - pba->unique_bytes;
-      }
-
-    tcpdata_received_total += ((double)pab->unique_bytes+(double)pba->unique_bytes)/1e6;
-    tcpdata_missed_total += (double)missing_bytes/1e6;	
-     
-   //     printf("%lu %lu %lu - %lu %lu %lu\n",pab->unique_bytes,pab_expected,pab_expected - pab->unique_bytes,
-   //                                pba->unique_bytes,pba_expected,pba_expected - pba->unique_bytes);
-     
-   }
-   
   /* check if this flow has been abruptly interrupted by the user       */
   /* according to the heuristic defined in                              */
   /* D. Rossi, C. Casetti, M. Mellia                                    */
@@ -3565,7 +2507,7 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
   /* dump stream properties                                  */
   /* topix                                                   */
 
-  if (ptp_save->con_type & (RTP_PROTOCOL | ICY_PROTOCOL))
+  if (ptp_save->con_type & RTP_PROTOCOL)
     {
 
       if (!ptp_save->internal_src && ptp_save->internal_dst)
@@ -3672,37 +2614,6 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 		      HostName (ptp_save->addr_pair.b_address));
 	      warn_IN_OUT = FALSE;
 	    }
-#ifdef LOG_UNKNOWN
-/* fool the internal and external definition... */
-	  add_histo (mm_type_loc, ptp_save->con_type);
-	  if (ptp_save->con_type & RTP_PROTOCOL)
-	    {
-	      add_histo (mm_rtp_pt_loc, ptp_save->rtp_pt);
-	    }
-	  add_histo (mm_cl_b_loc, pba->unique_bytes);
-	  //if(pba->unique_bytes <= SHORT_MM_CL_B)
-	  add_histo (mm_cl_b_s_loc, pba->unique_bytes);
-	  if (pba->packets >= BITRATE_MIN_PKTS)
-	    {
-	      add_histo (mm_avg_bitrate_loc,
-			 (pba->unique_bytes >> 7) / (etime / 1000.0));
-	    }
-	  add_histo (mm_cl_p_loc, pba->packets);
-	  //if(pba->packets <= SHORT_MM_CL_P)
-	  add_histo (mm_cl_p_s_loc, pba->packets);
-	  add_histo (mm_avg_ipg_loc,
-		     (pba->sum_delta_t / (pba->n_delta_t - 1)) * 10.);
-	  add_histo (mm_avg_jitter_loc,
-		     (pba->sum_jitter / (pba->n_delta_t - 1)) * 10.);
-	  add_histo (mm_n_oos_loc, pba->out_order_pkts);
-	  add_histo (mm_p_oos_loc,
-		     ((float) pba->out_order_pkts /
-		      (float) pba->packets) * 1000);
-	  add_histo (mm_tot_time_loc, etime / 1000);
-	  //if (etime <= SHORT_MM_TOT_TIME)
-	  add_histo (mm_tot_time_s_loc, etime);
-	  add_histo (mm_p_dup_loc, (pba->rexmit_pkts * 1000) / pba->packets);
-#endif
 	}
     }
   /* end topix */
@@ -3723,10 +2634,6 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
      if ((log_level & TCP_LOG_END_TO_END) && (complete))
        print_tcp_stats_e2e(fp, ptp_save, pab, pba);
 
-     /* P2P specific information */
-     if ((log_level & TCP_LOG_P2P) && (complete))
-       print_tcp_stats_p2p(fp, ptp_save, pab, pba);
-
      /* TCP protocol specific information */
      if ((log_level & TCP_LOG_OPTIONS) && (complete))
        print_tcp_stats_options(fp, ptp_save, pab, pba);
@@ -3741,343 +2648,9 @@ make_conn_stats (tcp_pair * ptp_save, Bool complete)
 
      wfprintf (fp, "\n");
    }
-   
-#if defined(VIDEO_DETAILS) || defined(STREAMING_CLASSIFIER)
-/*
- We might substitute the call to is_ssl_youtube() to the check of tls_service.
- Currently (15/12/15) they are not the same, since tls_service==TLS_YOUTUBE includes also
- ytimg.com, that is excluded in is_ssl_youtube(). -MMM-
-*/
-  if (fp_video_logc && LOG_IS_ENABLED(LOG_VIDEO_COMPLETE) 
-                    && ( is_video(ptp_save) || is_streaming(ptp_save) || is_ssl_youtube(ptp_save) || 
-                         is_tls_netflix(ptp_save) ) 
-                    && complete )
-   {
-     update_video_log(ptp_save,pab,pba);
-   }
-#endif
-   
-   if(!fp_rtp_logc || (((ptp_save->con_type & RTP_PROTOCOL) == 0)
-      && ((ptp_save->con_type & ICY_PROTOCOL) == 0)))
-      return;
-   
-   /* Disable any TCP log in log_mm_complete, even for ICY -MMM- */   
-   // update_conn_log_mm_v2(ptp_save,pab,pba);
 }
 
-Bool is_video(tcp_pair *ptp_save)
-{
-  if (ptp_save->con_type & RTMP_PROTOCOL)
-    return TRUE;
-    
-  if (!(ptp_save->con_type & HTTP_PROTOCOL))
-    return FALSE;
-
-  switch (ptp_save->http_data)
-   {
-     case HTTP_YOUTUBE_VIDEO:
-     case HTTP_YOUTUBE_VIDEO204:
-     case HTTP_YOUTUBE_204:
-     case HTTP_YOUTUBE_SITE:
-     case HTTP_YOUTUBE_SITE_DIRECT:
-     case HTTP_YOUTUBE_SITE_EMBED:
-     case HTTP_VIDEO_CONTENT:
-     case HTTP_VIMEO:
-     case HTTP_NETFLIX:
-     case HTTP_FLASHVIDEO:
-       return TRUE;
-     default:
-       return FALSE;
-   }
-}
-
-void init_ssl_youtube_patterns()
-{
-  regcomp(&yt_re[0],"\\.youtube\\.com$",REG_NOSUB);
-  regcomp(&yt_re[1],"\\.youtube-nocookie\\.com$",REG_NOSUB);
-  regcomp(&yt_re[2],"\\googlevideo\\.com$",REG_NOSUB);
-  regcomp(&yt_re[3],"\\gvt1\\.com$",REG_NOSUB);
-}
-
-Bool is_ssl_youtube(tcp_pair *ptp_save)
-{
-
-  if (!(ptp_save->con_type & SSL_PROTOCOL))
-    return FALSE;
-
-  if (ptp_save->ssl_client_subject!=NULL)
-   {
-     if  ( regexec(&yt_re[0],ptp_save->ssl_client_subject,0,NULL,0)==0 ||
-           regexec(&yt_re[1],ptp_save->ssl_client_subject,0,NULL,0)==0 ||
-           regexec(&yt_re[2],ptp_save->ssl_client_subject,0,NULL,0)==0 ||
-           regexec(&yt_re[3],ptp_save->ssl_client_subject,0,NULL,0)==0 )
-       return TRUE;
-     else
-       return FALSE;
-   }
-  else
-    return FALSE;
-}
-
-#if defined(VIDEO_DETAILS) || defined(STREAMING_CLASSIFIER) 
-void update_video_log(tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  if (fp_video_logc != NULL)
-   {
-    /* Core Tstat TCP measurements */
-    print_tcp_stats_core(fp_video_logc, ptp_save, pab, pba);
-
-    /* End to End flow measures (RTT and TTL) */
-    if ( video_level & VIDEO_LOG_END_TO_END )
-      print_tcp_stats_e2e(fp_video_logc, ptp_save, pab, pba);
-
-    /* Core video information */
-    print_video_stats_core(fp_video_logc, ptp_save, pab, pba);
-
-    /* Video additional information */
-    if ( video_level & VIDEO_LOG_VIDEOINFO )
-      print_video_stats_info(fp_video_logc, ptp_save, pab, pba);
-
-    /* Video YouTube information */
-    if ( video_level & VIDEO_LOG_YOUTUBE )
-      print_video_stats_youtube(fp_video_logc, ptp_save, pab, pba);
-
-    /* Video advanced rate measurements */
-    if ( video_level & VIDEO_LOG_ADVANCED )
-      print_video_stats_advanced(fp_video_logc, ptp_save, pab, pba);
-
-    /* TCP protocol specific information */
-    if ( video_level & VIDEO_LOG_OPTIONS )
-      print_tcp_stats_options(fp_video_logc, ptp_save, pab, pba);
-
-    /* TCP Layer7 specific information */
-    if ( video_level & VIDEO_LOG_LAYER7 )
-      print_tcp_stats_layer7(fp_video_logc, ptp_save, pab, pba);
-
-    wfprintf (fp_video_logc, "\n");
-
-   }
-}
-#endif
-
-Bool is_streaming(tcp_pair *ptp_save) {
-	if (!(ptp_save->con_type & HTTP_PROTOCOL))
-		return FALSE;
-
-	if (ptp_save->streaming.video_content_type != VIDEO_NOT_DEFINED
-			|| ptp_save->streaming.video_payload_type != VIDEO_NOT_DEFINED) {
-		return TRUE;
-	} else
-		return FALSE;
-}
-
-void
-update_conn_log_mm_v1(tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  double etime;
-
-  etime = elapsed (ptp_save->first_time, ptp_save->last_time);
-
-/* A --> B */
-  if (ptp_save->crypto_src==FALSE)
-     wfprintf (fp_rtp_logc, "%d %d %s %s",
-	   PROTOCOL_TCP,
-	   ptp_save->con_type,
-	   HostName (ptp_save->addr_pair.a_address),
-	   ServiceName (ptp_save->addr_pair.a_port));
-  else
-     wfprintf (fp_rtp_logc, "%d %d %s %s",
-	   PROTOCOL_TCP,
-	   ptp_save->con_type,
-	   HostNameEncrypted (ptp_save->addr_pair.a_address),
-	   ServiceName (ptp_save->addr_pair.a_port));
-
-  if (ptp_save->crypto_dst==FALSE)
-     wfprintf (fp_rtp_logc, " %s",
-           HostName (ptp_save->addr_pair.b_address));
-  else
-     wfprintf (fp_rtp_logc, " %s",
-           HostNameEncrypted (ptp_save->addr_pair.b_address));
-	   
-  wfprintf (fp_rtp_logc, " %s %lu %g %g %g %g %d %d %g %u %u %f %f %lu %g %g %g %u %u %g %g %g %g %u %g %g",
-	   ServiceName (ptp_save->addr_pair.b_port), 
-	   pab->packets,
-	   (pab->sum_delta_t / (pab->n_delta_t - 1)),
-	   (pab->sum_jitter / (pab->n_delta_t - 1)),
-	   pab->max_jitter,
-	   pab->min_jitter,
-	   ptp_save->internal_src,
-	   ptp_save->internal_dst,
-	   (double) pab->ttl_tot / (double) pab->packets,
-	   pab->ttl_max,
-	   pab->ttl_min,
-	   (double) ptp_save->first_time.tv_sec + (double) ptp_save->first_time.tv_usec / 1000000.0,
-	   etime / 1000.0,	/* [s] */
-	   pab->unique_bytes,
-	   ((double) (pab->unique_bytes) / (etime / 1000.0)) * 8,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_http) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_rtsp) / 1000.0,
-	   pab->out_order_pkts,
-	   pab->rexmit_pkts,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_rtp) / 1000.0,
-	   (Average (pab->rtt_sum, pab->rtt_count) / 1000.0),
-	   pab->rtt_max / 1000.0,
-	   pab->rtt_min / 1000.0,
-	   pab->rtt_count,
-	   pab->rttvar / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_icy) / 1000.0);
-
-/* B --> A */
-  if (ptp_save->crypto_dst==FALSE)
-     wfprintf (fp_rtp_logc, " %d %d %s %s",
-	   PROTOCOL_TCP,
-	   ptp_save->con_type,
-	   HostName (ptp_save->addr_pair.b_address),
-	   ServiceName (ptp_save->addr_pair.b_port));
-  else
-     wfprintf (fp_rtp_logc, " %d %d %s %s",
-	   PROTOCOL_TCP,
-	   ptp_save->con_type,
-	   HostNameEncrypted (ptp_save->addr_pair.b_address),
-	   ServiceName (ptp_save->addr_pair.b_port));
-
-  if (ptp_save->crypto_src==FALSE)
-     wfprintf (fp_rtp_logc, " %s",
-           HostName (ptp_save->addr_pair.a_address));
-  else
-     wfprintf (fp_rtp_logc, " %s",
-           HostNameEncrypted (ptp_save->addr_pair.a_address));
-	   
-  wfprintf (fp_rtp_logc, " %s %lu %g %g %g %g %d %d %g %u %u %f %f %lu %g %g %g %u %u %g %g %g %g %u %g %g",
-	   ServiceName (ptp_save->addr_pair.a_port), 
-	   pba->packets,
-	   (pba->sum_delta_t / (pba->n_delta_t - 1)),
-	   (pba->sum_jitter / (pba->n_delta_t - 1)),
-	   pba->max_jitter,
-	   pba->min_jitter,
-	   ptp_save->internal_src,
-	   ptp_save->internal_dst,
-	   (double) pba->ttl_tot / (double) pba->packets,
-	   pba->ttl_max,
-	   pba->ttl_min,
-	   (double) ptp_save->first_time.tv_sec + (double) ptp_save->first_time.tv_usec / 1000000.0,
-	   etime / 1000.0,	/* [s] */
-	   pba->unique_bytes,
-	   ((double) (pba->unique_bytes) / (etime / 1000.0)) * 8,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_http) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_rtsp) / 1000.0,
-	   pba->out_order_pkts,
-	   pba->rexmit_pkts,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_rtp) / 1000.0,
-	   (Average (pba->rtt_sum, pba->rtt_count) / 1000.0),
-	   pba->rtt_max / 1000.0,
-	   pba->rtt_min / 1000.0,
-	   pba->rtt_count,
-	   pba->rttvar / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_icy) / 1000.0);
-
-  wfprintf (fp_rtp_logc, "\n");
-}
-
-void
-update_conn_log_mm_v2(tcp_pair *ptp_save, tcb *pab, tcb *pba)
-{
-  double etime;
-
-  etime = elapsed (ptp_save->first_time, ptp_save->last_time);
-
-/* A --> B */
-  wfprintf (fp_rtp_logc, "%d %d",
-	   PROTOCOL_TCP,
-	   ptp_save->con_type);
-
-  if (ptp_save->crypto_src==FALSE)
-     wfprintf (fp_rtp_logc, " %s", HostName (ptp_save->addr_pair.a_address));
-  else
-     wfprintf (fp_rtp_logc, " %s", HostNameEncrypted (ptp_save->addr_pair.a_address));
-
-  wfprintf (fp_rtp_logc, " %s %d %lu %g %g %g %g %g %u %u %f %f %lu %g 0 0 %u %u 0 0 0 0 0 0 0 %g %g %g %u 0 %g %g %g %g",
-	   ServiceName (ptp_save->addr_pair.a_port),
-	   ptp_save->internal_src,
-	   pab->packets,
-	   (pab->sum_delta_t / (pab->n_delta_t - 1)),
-	   (pab->sum_jitter / (pab->n_delta_t - 1)),
-	   pab->max_jitter,
-	   pab->min_jitter,
-	   (double) pab->ttl_tot / (double) pab->packets,
-	   pab->ttl_max,
-	   pab->ttl_min,
-	   (double) ptp_save->first_time.tv_sec + (double) ptp_save->first_time.tv_usec / 1000000.0,
-	   etime / 1000.0,	/* [s] */
-	   pab->unique_bytes,
-	   ((double) (pab->unique_bytes) / (etime / 1000.0)) * 8,
-	   pab->out_order_pkts,
-	   pab->rexmit_pkts,
-	   (Average (pab->rtt_sum, pab->rtt_count) / 1000.0),
-	   pab->rtt_max / 1000.0,
-	   pab->rtt_min / 1000.0,
-	   pab->rtt_count,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_http) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_rtsp) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_rtp) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pab->u_protocols.f_icy) / 1000.0);
-
-/* B --> A */
-  if (ptp_save->crypto_dst==FALSE)
-     wfprintf (fp_rtp_logc, " %d %s",
-	   ptp_save->con_type,
-	   HostName (ptp_save->addr_pair.b_address));
-  else
-     wfprintf (fp_rtp_logc, " %d %s",
-	   ptp_save->con_type,
-	   HostNameEncrypted (ptp_save->addr_pair.b_address));
-
-  wfprintf (fp_rtp_logc, " %s %d %lu %g %g %g %g %g %u %u %f %f %lu %g 0 0 %u %u 0 0 0 0 0 0 0 %g %g %g %u 0 %g %g %g %g",
-	   ServiceName (ptp_save->addr_pair.b_port),
-	   ptp_save->internal_dst,
-	   pba->packets,
-	   (pba->sum_delta_t / (pba->n_delta_t - 1)),
-	   (pba->sum_jitter / (pba->n_delta_t - 1)),
-	   pba->max_jitter,
-	   pba->min_jitter,
-	   (double) pba->ttl_tot / (double) pba->packets,
-	   pba->ttl_max,
-	   pba->ttl_min,
-	   (double) ptp_save->first_time.tv_sec + (double) ptp_save->first_time.tv_usec / 1000000.0,
-	   etime / 1000.0,	/* [s] */
-	   pba->unique_bytes,
-	   ((double) (pba->unique_bytes) / (etime / 1000.0)) * 8,
-	   pba->out_order_pkts,
-	   pba->rexmit_pkts,
-	   (Average (pba->rtt_sum, pba->rtt_count) / 1000.0),
-	   pba->rtt_max / 1000.0,
-	   pba->rtt_min / 1000.0,
-	   pba->rtt_count,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_http) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_rtsp) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_rtp) / 1000.0,
-	   elapsed (ptp_save->first_time,
-		    pba->u_protocols.f_icy) / 1000.0);
-  
-  wfprintf (fp_rtp_logc, "\n");
-}
-
-void
+static void
 free_tp (tcp_pair * ptp_save)
 {
   int i;
@@ -4130,7 +2703,6 @@ freequad (quadrant ** ppquad)
 }
 
 
-#ifdef LOG_PERIODIC
 void print_periodic_log(tcp_pair * ptp_save) {
 
     /* TUPLE */
@@ -4244,4 +2816,3 @@ void print_periodic_log(tcp_pair * ptp_save) {
 
 }
 
-#endif //LOG_PERIODIC

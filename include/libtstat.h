@@ -21,10 +21,6 @@ typedef struct {
     unsigned long       tot_conn_TCP;       //current opened TCP flows
     unsigned long       tot_conn_UDP;       //current opened UDP flows
     int                 num_tcp_pairs;      //current flow vector index
-    long int            tot_adx_hash_count; //total adx used in hash
-    long int            tot_adx_list_count; //total adx used in list
-    long int            adx_search_hash_count;  //total adx hash search
-    long int            adx_search_list_count;  //total adx list search
     double              wallclock;          //elapsed wallclock time
     int                 pcktspersec;         //pkts/sec analyzed
     int                 flowspersec;         //flows/sec analyzed

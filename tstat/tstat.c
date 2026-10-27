@@ -23,28 +23,15 @@ static char const copyright[] =
     @(#)Copyright (c) 1999 -- Shawn Ostermann -- Ohio University.\n";
 
 #include "tstat.h"
-#include "file_formats.h"
 #include "version.h"
-#include <time.h>
-#include "tcpL7.h"
-#include "inireader.h"
 #include <sys/wait.h>
 #include <getopt.h>
-#include <sys/types.h>
 #include <fcntl.h>
-#include "videoL7.h"
 #include "globals.h"
+#include "options.h"
 
 /* version information */
 char *tstat_version = VERSION;
-
-/* seem to be missing from pthread.h */
-int pthread_mutexattr_settype (pthread_mutexattr_t * attr, int kind);
-#ifndef __FreeBSD__
-#if !(defined PTHREAD_MUTEX_ERRORCHECK || defined __USE_UNIX98)
-#define PTHREAD_MUTEX_ERRORCHECK PTHREAD_MUTEX_ERRORCHECK_NP
-#endif
-#endif
 
 /* Global struct with the content of param.h*/
 struct global_parameters GLOBALS;
@@ -60,19 +47,12 @@ static void Usage (void);
 static void BadArg (char *argsource, char *format, ...);
 static void Version (void);
 static int LoadInternalNets (char *file);
-static int LoadCloudNets (char *file);
 static int LoadCryptoNets (char *file);
 static int LoadWhiteNets (char *file);
 #ifndef TSTAT_RUNASLIB
 static void ProcessFile (char *filename, Bool last);
 #endif
 
-// static Bool internal_ip (struct in_addr adx);
-// static Bool cloud_ip (struct in_addr adx);
-// static Bool crypto_ip (struct in_addr adx);
-/*
-static Bool internal_ip_string (char *adx);
-*/
 Bool internal_eth (uint8_t *eth_addr, eth_filter *filter);
 int LoadInternalEth (char *file);
 
@@ -82,8 +62,7 @@ static int ip_header_stat (int phystype, struct ip *pip, u_long * fpnum,
 			   long int location, int tlen, void *plast,
 			   int ip_direction);
 
-void stat_dumping_old_style ();
-static void flush_histo_engine(void);
+static void flush_time_step(void);
 
 Bool filter_specified = FALSE;
 char *filter_filename;
@@ -101,17 +80,6 @@ int *internal_net_mask;
 int *internal_net_maskv6;
 int tot_internal_nets;
 int tot_internal_netsv6;
-
-/* Variables for Cloud definition*/
-Bool cloud_src = FALSE;
-Bool cloud_dst = FALSE;
-
-struct in_addr *cloud_net_list;
-struct in6_addr *cloud_net_listv6;
-int *cloud_net_mask;
-int *cloud_net_maskv6;
-int tot_cloud_nets;
-int tot_cloud_netsv6;
 
 /* Variables for Crypto definition*/
 Bool crypto_src = FALSE;
@@ -137,7 +105,6 @@ unsigned int ip_obfuscate_mask = 0x00000000; /* This is already in network order
 Bool live_flag = FALSE;
 
 Bool printticks = FALSE;
-Bool dump_all_histo_definition = FALSE;
 
 Bool warn_IN_OUT = TRUE;
 Bool warn_ooo = FALSE;
@@ -149,11 +116,7 @@ Bool warn_printbad_syn_fin_seq = FALSE;
 Bool do_udp = TRUE;
 int debug = 0;
 char **filenames = NULL;
-Bool swap_stdin = FALSE;
-FILE *second_file, *first_file;
-int two_files = 1;		/* used if you have two traces that store packet in
-				   two different direction... works only with DAG for now.
-				 */
+
 Bool con_cat = FALSE;		/* Concatenate the input files */
 Bool first_ip_packet = TRUE;
 u_long pnum = 0;
@@ -163,7 +126,6 @@ u_long bad_tcp_checksums = 0;
 u_long bad_udp_checksums = 0;
 
 /* globals */
-int *coredump;
 struct timeval current_time;
 
 unsigned long int fcount = 0;	/* total flow number */
@@ -180,69 +142,27 @@ struct L3_bitrates L3_bitrate;
 struct L4_bitrates L4_bitrate;
 struct L7_bitrates L7_bitrate;
 struct L7_bitrates L7_udp_bitrate;
-struct HTTP_bitrates HTTP_bitrate;
-struct WEB_bitrates WEB_bitrate;
-struct TLS_bitrates TLS_bitrate;
-
-struct VIDEO_rates VIDEO_rate;
-
-#ifdef L3_BITRATE
-unsigned long long L3_bit_rate_in;
-unsigned long long L3_bit_rate_out;
-unsigned long long L3_bit_rate_loc;
-unsigned long long L3_bit_rate_ip46_in;
-unsigned long long L3_bit_rate_ip46_out;
-unsigned long long L3_bit_rate_ip46_loc;
-struct timeval L3_last_time;
-#define L3_BITRATE_DELTA 10000000   /* 10 sec */
-#endif
-struct timeval adx2_last_time;
-unsigned long adx2_bitrate_delta;
-struct timeval adx3_last_time;
-unsigned long adx3_bitrate_delta;
 
 static u_long pcount = 0;   //global packet counter
 static u_long fpnum = 0;    //per file packet counter
 static int file_count = 0;
 
-#ifdef HAVE_RRDTOOL
 /*-----------------------------------------------------------*/
 /* RRDtools 				                     */
 /*-----------------------------------------------------------*/
 Bool rrdset_path = FALSE;	/* database path flag */
 Bool rrdset_conf = FALSE;	/* configuration file flag */
 /*-----------------------------------------------------------*/
-#endif
 
-Bool histo_engine = TRUE;	    /* -S */
-Bool adx_engine = FALSE;	    /* to allow disabling via -H */
-Bool adx2_engine = FALSE;	    /* secondary engine, enabled by histo.conf */
-Bool global_histo = FALSE;	    /* -g */
-
-Bool bayes_engine = FALSE;	    /* -B */
 Bool runtime_engine = FALSE;    /* -T */
 Bool rrd_engine = FALSE;
-Bool histo_engine_log = TRUE;
-#ifdef L3_BITRATE
-Bool l3_engine_log = FALSE;   /* -3 */
-#endif
-Bool zlib_logs = FALSE;   /* -Z */
-Bool zlib_dump = FALSE;   /* -P */
 
 Bool strict_privacy = FALSE;   /* -0 */
 
 Bool report_dnscache = FALSE;
 
 int log_level = TCP_LOG_ALL;
-// int log_level = TCP_LOG_CORE;  /* Basic TCP log level */
-int video_level = VIDEO_LOG_ALL;
-// int video_level = VIDEO_LOG_CORE;  /* Basic Video log level */
 Bool force_create_new_outfiles = FALSE;
-
-struct bayes_settings *bayes_settings_pktsize;
-struct bayes_settings *bayes_settings_avgipg;
-
-unsigned int adx_addr_mask[3] = { ADDR_MASK , ADDR2_MASK , ADDR2_MASK};
 
 /* locally global variables */
 static u_long filesize = 0;
@@ -251,22 +171,13 @@ static int num_files = 0;
 static u_int numfiles;
 #endif
 static char *cur_filename;
-static unsigned int step = 0;	/* counter to track the dir storing the
-				   periodic dumping of histograms. */
+static unsigned int step = 0;	/* number of time steps since the creation
+				   of the current output directory */
 static Bool first_packet_readed = FALSE; 
 
 static time_t last_mtime;           //last time runtime config file is changed
 static time_t last_mtime_check;
 static int mtime_stable_counter;    //when this counter is 0, read again runtime config    
-
-//XXX
-typedef enum
-{ ETH, DAG } Live_Cap_Type;
-int livecap_type;		/* indicate the type of live capture */
-#ifdef GROK_ERF_LIVE
-char *dag_dev_list;		/* list of DAG cards device names */
-#define DAG_NAME_BUFSIZE 25
-#endif
 
 int snaplen = DEFAULT_SNAPLEN;    /* Snaplen for the live capture */
 
@@ -275,12 +186,9 @@ struct timeval wallclock_start;
 struct timeval wallclock_finished;
 struct timeval wallclock_temp;
 
-struct timeval last_skypeprint_time;
-
 /* first and last packet timestamp */
 timeval first_packet = { 0, 0 };
 timeval last_packet = { 0, 0 };
-timeval last_skypeprint_time = { 0, 0 };
 
 /* .a.c. */
 Bool is_stdin;
@@ -289,42 +197,13 @@ FILE *fp_stderr = NULL;
 FILE *fp_logc = NULL;
 FILE *fp_lognc = NULL;
 FILE *fp_rtp_logc = NULL;
-FILE *fp_skype_logc = NULL;
 FILE *fp_udp_logc = NULL;
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-FILE *fp_chat_logc = NULL;
-FILE *fp_chat_log_msg = NULL;
-#ifdef MSN_OTHER_COMMANDS
-FILE *fp_msn_log_othercomm = NULL;
-#endif
-#endif
-#ifdef L3_BITRATE
-FILE *fp_l3bitrate = NULL;
-#endif
-
-/* LM */
-/* AF: THIS IS USELESS!!! 
-  1) It's creation is not integrated in the workflow 
-  2) in some points the code refer to a fp_dup_ooo which is never defined
-*/
-#ifdef LOG_OOO
-FILE *fp_dup_ooo_log;
-#endif
-
-#if defined(VIDEO_DETAILS)||defined(STREAMING_CLASSIFIER)
-FILE *fp_video_logc = NULL;
-#endif
-
-#ifdef LOG_PERIODIC
 FILE *fp_periodic_logc = NULL;
 FILE *fp_periodic_udp_logc = NULL;
-#endif
 
 FILE *fp_http_logc = NULL;
 
-#ifdef HAVE_LDNS
 FILE *fp_dns_logc = NULL;
-#endif // HAVE_LDNS
 
 long log_bitmask = LOG_ALL;
 
@@ -333,12 +212,8 @@ long log_bitmask = LOG_ALL;
 eth_filter mac_filter;
 Bool internal_dhost;
 Bool internal_shost;
-/* used when having two separate files or interfaces */
-Bool coming_in;
-Bool internal_wired = FALSE;
 /* used when relying on IP addresses */
 Bool net_conf = FALSE;
-Bool cloud_conf = FALSE;
 Bool crypto_conf = FALSE;
 Bool white_conf = FALSE;
 Bool eth_conf = FALSE;
@@ -353,9 +228,6 @@ int  globals_set = 0;
 long int tcp_packet_count;
 extern long not_id_p;
 extern int search_count;
-extern long int tot_adx_hash_count[3], tot_adx_list_count[3], adx_search_hash_count[3],
-  adx_search_list_count[3];
-extern void max_adx(int, int, double);
 
 extern char dump_conf_fname[];
 char runtime_conf_fname[200];
@@ -363,44 +235,12 @@ char runtime_conf_fname[200];
 timeval last_time_step;
 timeval last_cleaned;
 
-char global_data_dir[FILENAME_SIZE];
-char curr_data_dir[FILENAME_SIZE+20];
 
-#ifdef DNS_CACHE_PROCESSOR
 char *dns_namefilter_file;
 Bool dns_namefilter_specified = FALSE;
 Bool dns_enabled = TRUE;
-#endif
 
-#ifdef SUPPORT_IPV6
 Bool ipv6_enabled = TRUE;
-#endif
-
-/* PROFILE VARIABLES */
-int prof_last_clk;              // last amount of clock usage
-double prof_last_tm;            // last overall running time
-struct tms prof_last_tms;       // last running time (user and sys)
-double prof_cps;                // clock per seconds give by sysconf()
-
-#ifdef SIG_CHILD_HANDLER
-/* SIG_CHILD handler (to avoid zombie processes)*/
-void
-sigchld_h (int signum)
-{
-  pid_t pid;
-  int status;
-  while ((pid = waitpid (-1, &status, WNOHANG)) > 0)
-    {
-      if (debug > 1)
-	fprintf (fp_stdout, "Child (pid %d) terminated with status %d\n.", pid,
-		 status);
-    }
-  /* some OS reset the signal handler to SIG_DFL */
-  signal (SIGCHLD, sigchld_h);
-}
-
-/* end SIG_CHILD handler */
-#endif
 
 
 static void
@@ -408,43 +248,22 @@ Help (void)
 {
   fprintf (fp_stderr,
     "Usage:\n"
-#ifdef DNS_CACHE_PROCESSOR
-    "\ttstat [-htuvwgSLQX0] [-d[-d]]\n"
-#else
-    "\ttstat [-htuvwgSL0] [-d[-d]]\n"
-#endif
+    "\ttstat [-htucvwLQX0] [-d[-d]]\n"
     "\t      [-s dir]\n"
     "\t      [-N file]\n"
     "\t      [-M file]\n"
-    "\t      [-C file]\n"
     "\t      [-Y file]\n"
     "\t      [--keyvalue key | --keyfile file | --keybase64 file]\n"
     "\t      [--enc]\n"
     "\t      [-W file]\n"
-    "\t      [-B bayes.conf]\n"
     "\t      [-T runtime.conf]\n"
     "\t      [-G globals.conf]\n"
     "\t      [-z file]\n"
     "\t      [-A mask]\n"
-    "\t      [-H ?|file ]\n"
-#ifdef SUPPORT_IPV6
     "\t      [-6]\n"
-#endif
-#ifdef HAVE_ZLIB
-    "\t      [-Z] [-P]\n"
-#endif
-#ifdef DNS_CACHE_PROCESSOR
     "\t      [-F file]\n"
-#endif
-#ifdef HAVE_RRDTOOL
     "\t      [-r RRD_out_dir] [-R rrd_conf]\n"
-#endif
-#ifdef GROK_LIVE_TCPDUMP
     "\t      [-l] [-i interface] [-E snaplen]\n"
-#endif
-#ifdef GROK_ERF_LIVE
-    "\t      [--dag device_name device_name ...]\n"
-#endif
     "\t      [-f filterfile]\n"
     "\t      <file1 file2>\n"
     "\n"
@@ -486,13 +305,6 @@ Help (void)
     "\t                66:55:44:33:22:11 \n"
     "\t         If this option is specified, the -N param is ignored.\n"
     "\n"
-    "\t-C file: specify the file name which contains the\n"
-    "\t         description of the cloud IPv4 networks.\n"
-    "\t         This file must contain the IPv4 subnets that will be\n"
-    "\t         considered as belonging to a specific group of networks\n"
-    "\t         (cloud) during the analysis.\n"
-    "\t         Subnets are specified like in the -N option.\n"
-    "\n"
     "\t-Y file: specify the file name which contains the\n"
     "\t         description of the encrypted IPv4 networks.\n"
     "\t         This file must contain the subnets for which the IPv4 address\n"
@@ -525,28 +337,7 @@ Help (void)
     "\t         Subnets are specified like in the -N option.\n"
     "\t         Meaningful only if the -Y option is also specified.\n"
     "\n"
-	"\t-H ?: print internal histograms names and definitions\n"
-    "\t-H file: Read histogram configuration from file\n"
-	"\t         file describes which histograms tstat should collect\n"
-	"\t         'include histo_name' includes a single histogram\n"
-	"\t         'include_matching string' includes all histograms\n"
-    "\t         whose name includes the string\n"
-    "\t         special names are:\n"
-    "\t         'ALL' to include all histograms\n"
-    "\t         'ADX' to include address hits histogram\n"
-    "\t         for example, to include all TCP related\n"
-	"\t         and the address hits histograms, file should be:\n"
-    "\t         include ADX\n"
-    "\t         include_matching tcp\n"
-    "\t         'adx_mask N' is a special command to define the\n"
-    "\t         size of the netmask used to aggregate the address histograms\n"
-    "\t         (e.g. 'adx_mask 24' to use the 255.255.255.0 mask)\n"  
-    "\n"
-    "\t-g: Enable global histo engine\n"
-    "\t-S: No histo engine: do not create histograms files \n"
     "\t-L: No log engine: do not create log_* files \n"
-	"\t-B Bayes_Dir: enable Bayesian traffic classification\n"
-    "\t              configuration files from Bayes_Dir\n"
     "\t-T runtime.conf: configuration file to enable/disable dumping\n"
     "\t                 of traces and logs at runtime\n" 
     "\t-G globals.conf: configuration file to provide at startup new values\n"
@@ -554,48 +345,24 @@ Help (void)
     "\t-z file: redirect all the stdout/stderr messages to the file specified\n"
     "\t-A mask: enable XOR-based anonymization for internal IPv4 addresses.\n"
     "\t         'mask' is a decimal, octal, or hexadecimal value.\n"
-#ifdef SUPPORT_IPV6
     "\t-6: disable the L4 processing of IPv6 datagrams\n"
-#endif
-#ifdef HAVE_ZLIB
-    "\t-Z: Create gzip compressed (.gz) log files.\n"
-    "\t-P: Create gzip compressed (.gz) pcap dump files.\n"
-#endif
-#ifdef DNS_CACHE_PROCESSOR
     "\t-X: disable the DN-Hunter DNS engine\n"
     "\t-Q: enable report of wrap-around events in the DN-Hunter caches\n"
     "\t-F file: specify the file name which contains the\n"
     "\t         list of DNS domains to be included/excluded from the\n"
     "\t         TCP traffic dump. Activated in the runtime configuration (-T)\n"
-#endif
-#ifdef HAVE_RRDTOOL
 /*----------------------------------------------------------- 
    RRDtools 				                     
    these flags test for both the -r and -R options to be 
    specified when using RR database integration */
     "\t-R conf: specify the configuration file for integration with\n"
-    "\t         RRDtool. See README.RRDtool for further information\n"
+    "\t         RRDtool (see tstat-conf/rrd.conf)\n"
     "\t-r path: path to use to create/update the RRDtool database\n"
 /*-----------------------------------------------------------*/
-#endif
-#ifdef GROK_DPMI
-    "\t-D conf: DPMI configuration file\n"
-#endif /* GROK_DPMI */
-#ifdef GROK_LIVE_TCPDUMP
     "\t-l: enable live capture using libpcap\n"
     "\t-i interface: specifies the interface to be used to capture traffic\n"
     "\t-E snaplen: specifies the snaplen size used to capture traffic.\n"
     "\t            It might be overridden by the interface slen size\n"
-#endif /* GROK_LIVE_TCPDUMP */
-
-#ifdef GROK_ERF_LIVE
-    "\t--dag: enable live capture using Endace DAG cards. The\n"
-	"\t       list of device_name can contain at most four names\n"
-#endif /* GROK_ERF_LIVE */
-#ifdef L3_BITRATE
-    "\t-3: collect separate IP bitrate log (log_l3_bitrate)\n"
-#endif
-
     "\t-f filterfile: specifies the libpcap filter file. Syntax as in tcpdump\n"
     "\n"
     "\tfile: trace file to be analyzed\n"
@@ -612,7 +379,6 @@ Help (void)
   PrintGlobals();
   Version ();
 }
-
 
 
 static void
@@ -636,7 +402,6 @@ BadArg (char *argsource, char *format, ...)
 }
 
 
-
 static void
 Usage (void)
 {
@@ -645,28 +410,16 @@ Usage (void)
 }
 
 
-
 static void
 Version (void)
 {
   fprintf (fp_stderr, "\nVersion: %s\n", tstat_version);
   fprintf (fp_stderr, "Compiled by <%s>, on <%s> on machine <%s>",
 	   built_bywhom, built_when, built_where);
-#ifdef SUPPORT_IPV6
   fprintf (fp_stderr, ANSI_BOLD " with " ANSI_RESET);
-#else
-  fprintf (fp_stderr, ANSI_BOLD " without " ANSI_RESET);
-#endif
   fprintf (fp_stderr, "IPv6 support");
-#if defined(SUPPORT_IPV6) && defined(SUPPORT_MIXED_DNS)
-  fprintf (fp_stderr, " (mixed DNS)");
-#endif
   fprintf (fp_stderr, " and");
-#ifdef HAVE_LDNS
   fprintf (fp_stderr, ANSI_BOLD " with " ANSI_RESET);
-#else
-  fprintf (fp_stderr, ANSI_BOLD " without " ANSI_RESET);
-#endif
   fprintf (fp_stderr, "LDNS (log_dns) support");
   fprintf (fp_stderr, "\n\n");
 }
@@ -675,12 +428,11 @@ Version (void)
 static void
 Formats (void)
 {
-  int i;
-
   fprintf (fp_stderr, "Supported Input File Formats:\n");
-  for (i = 0; i < (int) NUM_FILE_FORMATS; ++i)
-    fprintf (fp_stderr, "\t%-15s  %s\n",
-	     file_formats[i].format_name, file_formats[i].format_descr);
+  fprintf (fp_stderr, "\t%-15s  %s\n", "tcpdump",
+	   "pcap and pcapng files, read through libpcap");
+  fprintf (fp_stderr, "\t%-15s  %s\n", "tcpdump live",
+	   "Live capture using libpcap");
 }
 
 #ifdef TSTAT_RUNASLIB
@@ -696,21 +448,8 @@ int tstat_init(char *config_fname) {
 
 int
 main (int argc, char *argv[]) {
-  int i, j;
+  int i;
   double etime;
-#endif
-  struct timeval prof_tm;
-
-/*
-  if ((argc == 1) && !fExists ("tstat.conf"))
-    {
-      Help ();
-      exit (1);
-    }
-*/
-  /* let's catch  SIG_CHILD signals */
-#ifdef SIG_CHILD_HANDLER
-  signal (SIGCHLD, sigchld_h);
 #endif
 
   /* initialize globals */
@@ -732,13 +471,6 @@ main (int argc, char *argv[]) {
 
 /* allocate all histo structs */
   create_all_histo ();
-  histo_parse_conf ();
-
-  if (dump_all_histo_definition == TRUE)
-    {
-      print_all_histo_definition ();
-      exit (0);
-    }
 
 
 #ifndef TSTAT_RUNASLIB
@@ -755,7 +487,6 @@ main (int argc, char *argv[]) {
 #endif
 
 
-#ifdef HAVE_RRDTOOL
   /*-----------------------------------------------------------*/
   /* RRDtools                                                   */
   /*   now that all the histo have been creaed, we may          */
@@ -765,7 +496,6 @@ main (int argc, char *argv[]) {
     rrdtool_init ();
   }
   /*-----------------------------------------------------------*/
-#endif
 
   /* register the protocol analyzer over TCP/UDP */
   proto_init ();
@@ -775,30 +505,11 @@ main (int argc, char *argv[]) {
   }
 
 
-/* inititializing adx_index_current */
-  alloc_adx (EXTERNAL_ADX_HISTO);
-  if (adx_engine && adx2_engine) 
-    { 
-      alloc_adx (INTERNAL_ADX_HISTO);
-      alloc_adx (INTERNAL_ADX_MAX);
-    }
-
   /* initialize bitrate struct */
   memset (&L3_bitrate, 0, sizeof (struct L3_bitrates));
   memset (&L4_bitrate, 0, sizeof (struct L4_bitrates));
   memset (&L7_bitrate, 0, sizeof (struct L7_bitrates));
   memset (&L7_udp_bitrate, 0, sizeof (struct L7_bitrates));
-  memset (&HTTP_bitrate, 0, sizeof (struct HTTP_bitrates));
-  memset (&WEB_bitrate, 0, sizeof (struct WEB_bitrates));
-  memset (&TLS_bitrate, 0, sizeof (struct TLS_bitrates));
-  memset (&VIDEO_rate, 0, sizeof (struct VIDEO_rates));
-
-  /* init profile variables */
-  prof_last_clk = (int)clock();
-  gettimeofday(&prof_tm, NULL);
-  prof_last_tm = time2double(prof_tm)/1e6;
-  times(&prof_last_tms);
-  prof_cps = sysconf(_SC_CLK_TCK) * 1.0;
   
 #ifndef TSTAT_RUNASLIB
   /* read each file in turn */
@@ -807,21 +518,17 @@ main (int argc, char *argv[]) {
       numfiles = argc;
       for (i = 0; i < argc; i++)
 	{
-	  for (j = 0; j < two_files; j++)
+	  if ((debug > 0) || (numfiles > 1))
 	    {
-	      if ((debug > 0) || (numfiles > 1))
-		{
-		  if (argc > 1)
-		    fprintf (fp_stdout, "\nRunning file '%s' (%d of %d)\n",
-			    filenames[i + j], i + j + 1, numfiles);
-		  else
-		    fprintf (fp_stdout, "Running file '%s'\n", filenames[i]);
-		}
+	      if (argc > 1)
+		fprintf (fp_stdout, "\nRunning file '%s' (%d of %d)\n",
+			filenames[i], i + 1, numfiles);
+	      else
+		fprintf (fp_stdout, "Running file '%s'\n", filenames[i]);
 	    }
 
 	  /* do the real work */
-	  ProcessFile (filenames[i], (i + j == numfiles));
-	  i += j - 1;
+	  ProcessFile (filenames[i], (i + 1 == numfiles));
 	}
     }
   else
@@ -854,6 +561,7 @@ main (int argc, char *argv[]) {
       fprintf(fp_stdout, "\tfirst packet:  %s\n", ts2ascii (&first_packet));
       fprintf(fp_stdout, "\tlast packet:   %s\n", ts2ascii (&last_packet));
     }
+  rrdtool_close ();
   exit(EXIT_SUCCESS);
 #else
   return EXIT_SUCCESS;
@@ -864,23 +572,11 @@ void reopen_logfile(FILE **fp_ref, const char *basename, const char *filename)
 {
   static char logfile[FILENAME_SIZE+50];
 
-#ifdef HAVE_ZLIB
-  if (zlib_logs)
-   {
-    snprintf (logfile,FILENAME_SIZE,"%s/%s.gz", basename, filename);
-    if (*fp_ref != NULL)
-      gzclose (*fp_ref);
-    *fp_ref = gzopen (logfile, "a");
-   }
-  else
-#endif
-   {
-    snprintf (logfile,FILENAME_SIZE,"%s/%s", basename, filename);
-    if (*fp_ref != NULL)
-      fclose (*fp_ref);
-    *fp_ref = fopen (logfile, "a");
-   }
-  
+  snprintf (logfile,FILENAME_SIZE,"%s/%s", basename, filename);
+  if (*fp_ref != NULL)
+    fclose (*fp_ref);
+  *fp_ref = fopen (logfile, "a");
+
   if (*fp_ref == NULL)
     {
       fprintf (fp_stderr, "Could not open file %s\n", logfile);
@@ -954,8 +650,6 @@ int  write_tcplog_header_block(FILE *fp, int block, int base_column)
          * basic L7 info 
          ********************************/
        wfprintf(fp, " con_t:%d", col++);	// 101: connection type
-       wfprintf(fp, " p2p_t:%d", col++);	// 102: p2p type
-       wfprintf(fp, " http_t:%d", col++);	// 109: http type
        break;
      case TCP_LOG_END_TO_END:
        wfprintf(fp, " c_rtt_avg:%d", col++);	  // 29: RTT average
@@ -998,30 +692,15 @@ int  write_tcplog_header_block(FILE *fp, int block, int base_column)
        wfprintf(fp, " c_appdataB:%d", col++);     // TLS client first Application Data rel seqno
        wfprintf(fp, " s_appdataB:%d", col++);     // TLS server first Application Data rel seqno
        
-#ifdef SNOOP_DROPBOX
-       wfprintf(fp, " dropbox_id:%d", col++);    // dropbox device id
-#endif
-#ifdef DNS_CACHE_PROCESSOR
        wfprintf(fp, " fqdn:%d", col++);          // full qualified domain name
        wfprintf(fp, " dns_rslv:%d", col++);      // dns server ip address
        wfprintf(fp, " req_tm:%d", col++);        // absolute dns request time
        wfprintf(fp, " res_tm:%d", col++);        // absolute dns response time
-#endif
        wfprintf(fp, " http_hostname:%d", col++); // first HTTP hostname (from Host:) if collected and present
        
        wfprintf(fp, " c_TLSvers:%d", col++); // first HTTP hostname (from Host:) if collected and present
        wfprintf(fp, " s_TLSvers:%d", col++); // first HTTP hostname (from Host:) if collected and present
-#ifdef DNS_CACHE_PROCESSOR
        wfprintf(fp, " dns_enc:%d", col++);       // dns server ip address is encrypted
-#endif
-       break;
-     case TCP_LOG_P2P:
-       wfprintf(fp, " p2p_st:%d", col++);	 // 103: p2p subtype
-       wfprintf(fp, " ed2k_data:%d", col++);	 // 104: number of ed2k data messages
-       wfprintf(fp, " ed2k_sig:%d", col++);	 // 105: number of ed2k signalin messages
-       wfprintf(fp, " ed2k_c2s:%d", col++);	 // 106: number of ed2k client 2 server messages
-       wfprintf(fp, " ed2k_c2c:%d", col++);	 // 107: number of ed2k client 2 client messages
-       wfprintf(fp, " ed2k_chat:%d", col++);	 // 108: number of ed2k chat messages
        break;
      case TCP_LOG_OPTIONS:
        wfprintf(fp, " c_f1323_opt:%d", col++);    // 15: window scale option (0/1)
@@ -1073,11 +752,6 @@ int  write_tcplog_header_block(FILE *fp, int block, int base_column)
        wfprintf(fp, " s_syn_retx:%d", col++);	  // 88: retransmitted SYN with different initial seqno (0/1)
        break;
      case TCP_LOG_ADVANCED:
-#ifdef LOST_PACKET_STAT
-       wfprintf(fp, " c_pkts_drop:%d", col++);    // number of drop client packets counted from seqno
-       wfprintf(fp, " s_pkts_drop:%d", col++);    // number of dopt server packets counted from seqno
-#endif
-
 #ifdef PACKET_STATS
        /*******************************
         * PSH-delimited Message sizes 
@@ -1134,12 +808,6 @@ int  write_tcplog_header_block(FILE *fp, int block, int base_column)
        wfprintf(fp, " c_pkts_push:%d", col++);
        wfprintf(fp, " s_pkts_push:%d", col++);
 #endif
-
-#ifdef ENABLE_LOG_MPTCP
-       /* MPTCP information at the end of the line */ 
-       wfprintf(fp, " c_mptcp:%d", col++);    // Client MPTCP request
-       wfprintf(fp, " s_mptcp:%d", col++);    // Server MPTCP support
-#endif
        break;
      default:
        break;
@@ -1164,9 +832,6 @@ void write_log_header(FILE *fp, int log_type)
 
      if (log_level & TCP_LOG_END_TO_END)
        col = write_tcplog_header_block(fp,TCP_LOG_END_TO_END,col);
-
-     if (log_level & TCP_LOG_P2P)
-       col = write_tcplog_header_block(fp,TCP_LOG_P2P,col);
 
      if (log_level & TCP_LOG_OPTIONS)
        col = write_tcplog_header_block(fp,TCP_LOG_OPTIONS,col);
@@ -1205,19 +870,6 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf(fp, " c_isint:%d", col++);	 // client ip is internal
      wfprintf(fp, " c_iscrypto:%d", col++);	 // client ip is internal
      wfprintf(fp, " c_type:%d", col++); 	 // flow type
-#ifdef P2P_DETAILS
-     wfprintf(fp, " c_p2p_pkts:%d", col++);	 // number of p2p packets
-     wfprintf(fp, " c_p2p_pkts_edk:%d", col++);  // number of Emule-EDK packets
-     wfprintf(fp, " c_p2p_pkts_kad:%d", col++);  // number of Emule-KAD packets
-     wfprintf(fp, " c_p2p_pkts_kadu:%d", col++); // number of Emule-KADU packets
-     wfprintf(fp, " c_p2p_pkts_gnu:%d", col++);  // number of Gnutella packets
-     wfprintf(fp, " c_p2p_pkts_bit:%d", col++);  // number of Bittorrent packets
-     wfprintf(fp, " c_p2p_pkts_dc:%d", col++);   // number of DirectConnect packets
-     wfprintf(fp, " c_p2p_pkts_kaz:%d", col++);  // number of Kazaa packets
-     wfprintf(fp, " c_p2p_pkts_ppl:%d", col++);  // number of PPLive packets
-     wfprintf(fp, " c_p2p_pkts_sop:%d", col++);  // number of SopCast packets
-     wfprintf(fp, " c_p2p_pkts_tva:%d", col++);  // number of TVAnts packets
-#endif
      wfprintf(fp, " s_ip:%d", col++);		 // server ip
      wfprintf(fp, " s_port:%d", col++); 	 // server port
      wfprintf(fp, " s_first_abs:%d", col++);	 // first time absolute
@@ -1227,30 +879,13 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf(fp, " s_isint:%d", col++);	 // server ip is internal
      wfprintf(fp, " s_iscrypto:%d", col++);	 // server ip is internal
      wfprintf(fp, " s_type:%d", col++); 	 // flow type
-#ifdef P2P_DETAILS
-     wfprintf(fp, " s_p2p_pkts:%d", col++);	 // number of p2p packets
-     wfprintf(fp, " s_p2p_pkts_edk:%d", col++);  // number of Emule-EDK packets
-     wfprintf(fp, " s_p2p_pkts_kad:%d", col++);  // number of Emule-KAD packets
-     wfprintf(fp, " s_p2p_pkts_kadu:%d", col++); // number of Emule-KADU packets
-     wfprintf(fp, " s_p2p_pkts_gnu:%d", col++);  // number of Gnutella packets
-     wfprintf(fp, " s_p2p_pkts_bit:%d", col++);  // number of Bittorrent packets
-     wfprintf(fp, " s_p2p_pkts_dc:%d", col++);   // number of DirectConnect packets
-     wfprintf(fp, " s_p2p_pkts_kaz:%d", col++);  // number of Kazaa packets
-     wfprintf(fp, " s_p2p_pkts_ppl:%d", col++);  // number of PPLive packets
-     wfprintf(fp, " s_p2p_pkts_sop:%d", col++);  // number of SopCast packets
-     wfprintf(fp, " s_p2p_pkts_tva:%d", col++);  // number of TVAnts packets
-#endif
-#ifdef DNS_CACHE_PROCESSOR
         wfprintf (fp, " fqdn:%d", col++);
-#endif
-#ifdef QUIC_DETAILS      
      wfprintf (fp, " quic_SNI:%d", col++);
      wfprintf (fp, " quic_UA:%d", col++);
      wfprintf (fp, " quic_c_vers:%d", col++);
      wfprintf (fp, " quic_s_vers:%d", col++);
      wfprintf (fp, " quic_zero_rtt:%d", col++);
      wfprintf (fp, " quic_ech:%d", col++);
-#endif
 #ifdef PACKET_STATS
        /*******************************
         * segment sizes 
@@ -1290,89 +925,6 @@ void write_log_header(FILE *fp, int log_type)
        wfprintf (fp, " s_sit_avg:%d", col++);
        wfprintf (fp, " s_sit_std:%d", col++);
 #endif
-      
-     wfprintf (fp, "\n");
-   }
-
-    /**************************************************
-     * LOG_VIDEO_COMPLETE
-     **************************************************/
-  else if (log_type == LOG_VIDEO_COMPLETE)
-   {
-     col = 1;
-     wfprintf (fp, "#%02d",video_level);  /* Level coded at the start of the header line */
-    
-     /* Core Tstat TCP measurements for both log_video_complete */
-     col = write_tcplog_header_block(fp,TCP_LOG_CORE,col);
-
-     if ( video_level & VIDEO_LOG_END_TO_END )
-       col = write_tcplog_header_block(fp,TCP_LOG_END_TO_END,col);
-
-      /* Core video information */
-
-     wfprintf(fp, " vd_type_cont:%d", col++);	 // 77: video type classification from HTTP content-type
-     wfprintf(fp, " vd_type_pay:%d", col++);	 // 78: video type classification from payload
-     wfprintf(fp, " yt_id16_46:%d", col++);	 // 73: youtube, id16/46
-     wfprintf(fp, " yt_itag:%d", col++);	 // 75: youtube, itag value (format type)
-
-      /* Video additional information */
-
-     if ( video_level & VIDEO_LOG_VIDEOINFO )
-      {
-        wfprintf(fp, " vd_dur:%d", col++);	     // 79: video duration
-        wfprintf(fp, " vd_rate_tot:%d", col++);      // 80: video rate total
-        wfprintf(fp, " vd_width:%d", col++);	     // 81: video width pixel
-        wfprintf(fp, " vd_height:%d", col++);	     // 82: video height pixel
-      }
-
-      /* Video YouTube information */
-
-     if ( video_level & VIDEO_LOG_YOUTUBE )
-      {
-        wfprintf(fp, " yt_id11:%d", col++);	    // 74: youtube, id11
-        wfprintf(fp, " yt_seek:%d", col++);	    // 76: youtube, seek value (begin offset)
-        wfprintf(fp, " yt_red_mode:%d", col++);     // 87: youtube redirection mode
-        wfprintf(fp, " yt_red_cnt:%d", col++);      // 88: youtube redirection count
-        wfprintf(fp, " yt_mobile:%d", col++);	     // 89: youtube, mobile category
-        wfprintf(fp, " yt_stream:%d", col++);	     // 90: youtube, streaming category
-      }
-
-      /* Video advanced rate measurements */
-
-     if ( video_level & VIDEO_LOG_ADVANCED )
-      {
-        wfprintf(fp, " c_rate_smpl:%d", col++);      // 22: number of rate samples
-        wfprintf(fp, " c_rate_zero:%d", col++);      // 23: number of empty rate samples 
-        wfprintf(fp, " c_rate_streak:%d", col++);    // 24: maximum number of consecutive empty rate samples
-        wfprintf(fp, " c_rate_avg:%d", col++);       // 25: average upload rate 
-        wfprintf(fp, " c_rate_std:%d", col++);       // 26: standard deviation of upload rate
-        wfprintf(fp, " c_rate_min:%d", col++);       // 27: minimum upload rate
-        wfprintf(fp, " c_rate_max:%d", col++);       // 28: maximum upload rate
-        wfprintf(fp, " s_rate_smpl:%d", col++);      // 51: number of rate samples
-        wfprintf(fp, " s_rate_zero:%d", col++);      // 52: number of empty rate samples 
-        wfprintf(fp, " s_rate_streak:%d", col++);    // 53: maximum number of consecutive empty rate samples
-        wfprintf(fp, " s_rate_avg:%d", col++);       // 54: average upload rate 
-        wfprintf(fp, " s_rate_std:%d", col++);       // 55: standard deviation of upload rate
-        wfprintf(fp, " s_rate_min:%d", col++);       // 56: minimum upload rate
-        wfprintf(fp, " s_rate_max:%d", col++);       // 57: maximum upload rate
-
-        for (i=0;i<10;i++) 
-          wfprintf (fp, " c_rate%d:%d", i+1, col++); 
-
-        for (i=0;i<10;i++)
-          wfprintf (fp, " s_rate%d:%d", i+1, col++); 
-
-        wfprintf (fp, " s_msg:%d", col++);
-        for (i=0;i<MAX_COUNT_MESSAGES;i++) 
-          wfprintf (fp, " s_msgsize%d:%d", i+1, col++);
-
-      }
-
-     if ( video_level & VIDEO_LOG_OPTIONS )
-       col = write_tcplog_header_block(fp,TCP_LOG_OPTIONS,col);
-
-     if ( video_level & VIDEO_LOG_LAYER7 )
-       col = write_tcplog_header_block(fp,TCP_LOG_LAYER7,col);
 
      wfprintf (fp, "\n");
    }
@@ -1399,9 +951,7 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf (fp,"\ttime_abs:%d",col++); 	// 5: absolute packet time
      wfprintf (fp,"\tmethod:%d",col++);		// 6: method
      wfprintf (fp,"\thostname:%d",col++); 	// 7: hostname
-#ifdef DNS_CACHE_PROCESSOR
      wfprintf(fp, "\tfqdn:%d", col++);          // 8: full qualified domain name
-#endif
      wfprintf (fp,"\tpath:%d",col++);	        // 8: path
      wfprintf (fp,"\treferer:%d",col++);  	// 9: referer
      wfprintf (fp,"\tuser_agent:%d",col++);	// 10: user agent
@@ -1435,7 +985,6 @@ void write_log_header(FILE *fp, int log_type)
      wfprintf(fp, "\n");
    }
 
-#ifdef HAVE_LDNS
   else if (log_type == LOG_DNS_COMPLETE) 
    {
     col = 1;
@@ -1463,71 +1012,7 @@ void write_log_header(FILE *fp, int log_type)
     wfprintf (fp," pkt_size:%d",col++);	
     wfprintf(fp, "\n");
    }
-#endif
 
-    /**************************************************
-     * LOG_CHAT_MESSAGES
-     **************************************************/
-  else if (log_type == LOG_CHAT_MESSAGES)
-   {
-     wfprintf (fp,
-	   "#idflow:1"        // 1: TCP id flow
-           " type:2"          // 2: message type
-           " dir:3"           // 3: direction
-           " paylen:4"        // 4: payload length
-           " first_tm:5"      // 5: first time (as string)
-           " durat:6"         // 6: duration 
-           " con_t:7"         // 7: connection type
-           "\n"
-        );
-   }
-
-    /**************************************************
-     * LOG_CHAT_COMPLETE
-     **************************************************/
-  else if (log_type == LOG_CHAT_COMPLETE)
-   {
-     wfprintf(fp,
-            /*****************
-             * client
-             *****************/
-            "#c_ip:1"           // 1: client ip
-            " c_port:2"         // 2: client port
-            " c_bytes_uniq:3"   // 3: number of unique bytes uploaded
-            " c_pkts_all:4"     // 4: total number of segments uploaded
-            " c_msn:5"          // 5: total number of MSN messages
-            " c_msn_a:6"        // 6: number of MSN messages type A
-            " c_msn_d:7"        // 7: number of MSN messages type D
-            " c_msn_n:8"        // 8: number of MSN messages type N
-            " c_msn_u:9"        // 9: number of MSN messages type U
-            " c_msn_y:10"       // 10: number of MSN messages type Y
-            /*****************
-             * server
-             *****************/
-            " s_ip:11"          // 11: server ip                           
-            " s_port:12"        // 12: server port
-            " s_bytes_uniq:13"  // 13: number of unique bytes uploaded
-            " s_pkts_all:14"    // 14: total number of segments uploaded
-            " s_msn:15"         // 15: total number of MSN messages
-            " s_msn_a:16"       // 16: number of MSN messages type A
-            " s_msn_d:17"       // 17: number of MSN messages type D
-            " s_msn_n:18"       // 18: number of MSN messages type N
-            " s_msn_u:19"       // 19: number of MSN messages type U
-            " s_msn_y:20"       // 20: number of MSN messages type Y
-            /***********/
-            " first_tm:21"      // 21: absolute start time
-            " durat:22"         // 22: duration
-            " type:23"          // 23: chat flow type
-            " ver:24"           // 24: chat version
-            " c_isint:25"       // 25: client is internal
-            " flowid:26"        // 26: TCP flow id
-            " T:27"             // 27: T = TCP
-            " con_t:28"         // 28: TCP connect type
-            " c_iscrypto:29"
-            " s_iscrypto:30"
-        );
-      wfprintf (fp, "\n");
-   }
    else if (log_type == LOG_MM_COMPLETE)
    {
      col = 1;
@@ -1725,7 +1210,7 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
 	filename = old_filename;
 }
 
-  if (!histo_engine && !log_bitmask && !global_histo && !runtime_engine)
+  if (!log_bitmask && !runtime_engine)
     return;
 
   if (reuse_dir == FALSE) {
@@ -1761,13 +1246,7 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
           fprintf(fp_stderr, "Cannot create directory %s\n", basename);
       }
       fprintf(fp_stdout, "[%s] created new outdir %s\n", Timestamp(), basename);
-
-      if (global_histo)
-        sprintf (global_data_dir, "%s/GLOBAL", basename);
   }
-
-  if (!histo_engine && !log_bitmask && !runtime_engine)
-    return;
 
   if (LOG_IS_ENABLED(LOG_TCP_COMPLETE)) {
       reopen_logfile(&fp_logc,basename,"log_tcp_complete");
@@ -1780,69 +1259,21 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
       write_log_header(fp_lognc, LOG_TCP_NOCOMPLETE);
   }
 
-#ifdef RTP_CLASSIFIER
   if (LOG_IS_ENABLED(LOG_MM_COMPLETE)) {
-      //TOFIX: missing header in this log file
       reopen_logfile(&fp_rtp_logc, basename, "log_mm_complete");
       write_log_header(fp_rtp_logc, LOG_MM_COMPLETE);
   }
 
-#endif
-
-#ifdef SKYPE_CLASSIFIER
-  if (bayes_engine && LOG_IS_ENABLED(LOG_SKYPE_COMPLETE)) {
-      //TOFIX: missing header in this log file
-     reopen_logfile(&fp_skype_logc, basename, "log_skype_complete");
-  }
-#endif
-
-#ifdef P2P_CLASSIFIER
   if (LOG_IS_ENABLED(LOG_UDP_COMPLETE)) {
       reopen_logfile(&fp_udp_logc,basename,"log_udp_complete");
       write_log_header(fp_udp_logc, LOG_UDP_COMPLETE);
   }
-
-#endif 
-
-      /* MSN+Yahoo+Jabber log */
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-  if (LOG_IS_ENABLED(LOG_CHAT_COMPLETE)) {
-      reopen_logfile(&fp_chat_logc,basename,"log_chat_complete");
-      write_log_header(fp_chat_logc, LOG_CHAT_COMPLETE);
-  }
-
-  if (LOG_IS_ENABLED(LOG_CHAT_MESSAGES)) {
-      reopen_logfile(&fp_chat_log_msg,basename,"log_chat_messages");
-      write_log_header(fp_chat_log_msg, LOG_CHAT_MESSAGES);
-  }
-#ifdef MSN_OTHER_COMMANDS
-  if (LOG_IS_ENABLED(LOG_CHAT_MSNOTHER)) {
-          //TOFIX: add the header
-      reopen_logfile(&fp_msn_log_othercomm,basename,"log_msn_OtherCommands");
-  }
-#endif
-#endif
-
-#ifdef L3_BITRATE
-  if (LOG_IS_ENABLED(LOG_L3_BITRATE)) {
-      //TOFIX: add the header
-      reopen_logfile(&fp_l3bitrate,basename,"log_l3_bitrate");
-  }
-#endif
-
-#if defined(VIDEO_DETAILS)||defined(STREAMING_CLASSIFIER)
-  if (LOG_IS_ENABLED(LOG_VIDEO_COMPLETE)) {
-      reopen_logfile(&fp_video_logc,basename,"log_video_complete");
-      write_log_header(fp_video_logc, LOG_VIDEO_COMPLETE);
-  }
-#endif
 
   if (LOG_IS_ENABLED(LOG_HTTP_COMPLETE)) {
       reopen_logfile(&fp_http_logc,basename,"log_http_complete");
       write_log_header(fp_http_logc,LOG_HTTP_COMPLETE);
   }
 
-#ifdef LOG_PERIODIC
   if (LOG_IS_ENABLED(LOG_TCP_PERIODIC)) {
       reopen_logfile(&fp_periodic_logc,basename,"log_tcp_periodic");
       write_log_header(fp_periodic_logc, LOG_TCP_PERIODIC);
@@ -1852,23 +1283,11 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
       reopen_logfile(&fp_periodic_udp_logc,basename,"log_udp_periodic");
       write_log_header(fp_periodic_udp_logc, LOG_UDP_PERIODIC);
   }
-#endif
 
-//AF: this is legacy code
-#ifdef LOG_OOO
-  if (LOG_IS_ENABLED(LOG_DUP_OOO)) {
-      /* MGM start */
-      /* Open the files for dup and ooo logging */
-      reopen_logfile(&fp_dup_ooo,basename,"dup_ooo");
-  }
-#endif
-
-#ifdef HAVE_LDNS
   if (LOG_IS_ENABLED(LOG_DNS_COMPLETE)) {
       reopen_logfile(&fp_dns_logc,basename,"log_dns_complete");
       write_log_header(fp_dns_logc,LOG_DNS_COMPLETE);
   }
-#endif
 
     if (runtime_engine)
         dump_create_outdir(basename);
@@ -1876,94 +1295,13 @@ create_new_outfiles (char *input_filename, Bool reuse_dir)
 
 void close_all_logfiles()
 {
-#ifdef HAVE_ZLIB
-  if (zlib_logs)
-    {
-      if (fp_logc != NULL) { gzclose(fp_logc); fp_logc=NULL; }
-      if (fp_lognc != NULL) { gzclose(fp_lognc); fp_lognc=NULL; }
+  if (fp_logc != NULL) { fclose(fp_logc); fp_logc=NULL; }
+  if (fp_lognc != NULL) { fclose(fp_lognc); fp_lognc=NULL; }
 
-#ifdef RTP_CLASSIFIER
-      if (fp_rtp_logc != NULL) { gzclose(fp_rtp_logc); fp_rtp_logc=NULL; }
-#endif
-
-#ifdef SKYPE_CLASSIFIER
-      if (fp_skype_logc != NULL) { gzclose(fp_skype_logc); fp_skype_logc=NULL; }
-#endif
-
-#ifdef P2P_CLASSIFIER
-      if (fp_udp_logc != NULL) { gzclose(fp_udp_logc); fp_udp_logc=NULL; }
-#endif 
-
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-      if (fp_chat_logc != NULL) { gzclose(fp_chat_logc); fp_chat_logc=NULL; }
-      if (fp_chat_log_msg != NULL) { gzclose(fp_chat_log_msg); fp_chat_log_msg=NULL; }
-#ifdef MSN_OTHER_COMMANDS
-      if (fp_msn_log_othercomm != NULL) { gzclose(fp_msn_log_othercomm); fp_msn_log_othercomm=NULL; }
-#endif
-#endif
-
-#ifdef L3_BITRATE
-      if (fp_l3bitrate != NULL) { gzclose(fp_l3bitrate); fp_l3bitrate=NULL; }
-#endif
-
-#if defined(VIDEO_DETAILS)||defined(STREAMING_CLASSIFIER)
-      if (fp_video_logc != NULL) { gzclose(fp_video_logc); fp_video_logc=NULL; }
-#endif
-
-      if (fp_http_logc != NULL) { gzclose(fp_http_logc); fp_http_logc=NULL; }
-
-#ifdef HAVE_LDNS
-      if (fp_dns_logc != NULL) { gzclose(fp_dns_logc); fp_dns_logc=NULL; }
-#endif 
-
-#ifdef LOG_OOO
-      if (fp_dup_ooo != NULL) { gzclose(fp_dup_ooo); fp_dup_ooo=NULL; }
-#endif
-    }
-  else
-#endif   /* HAVE_ZLIB */
-    {
-      if (fp_logc != NULL) { fclose(fp_logc); fp_logc=NULL; }
-      if (fp_lognc != NULL) { fclose(fp_lognc); fp_lognc=NULL; }
-
-#ifdef RTP_CLASSIFIER
-      if (fp_rtp_logc != NULL) { fclose(fp_rtp_logc); fp_rtp_logc=NULL; }
-#endif
-
-#ifdef SKYPE_CLASSIFIER
-      if (fp_skype_logc != NULL) { fclose(fp_skype_logc); fp_skype_logc=NULL; }
-#endif
-
-#ifdef P2P_CLASSIFIER
-      if (fp_udp_logc != NULL) { fclose(fp_udp_logc); fp_udp_logc=NULL; }
-#endif 
-
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-      if (fp_chat_logc != NULL) { fclose(fp_chat_logc); fp_chat_logc=NULL; }
-      if (fp_chat_log_msg != NULL) { fclose(fp_chat_log_msg); fp_chat_log_msg=NULL; }
-#ifdef MSN_OTHER_COMMANDS
-      if (fp_msn_log_othercomm != NULL) { fclose(fp_msn_log_othercomm); fp_msn_log_othercomm=NULL; }
-#endif
-#endif
-
-#ifdef L3_BITRATE
-      if (fp_l3bitrate != NULL) { fclose(fp_l3bitrate); fp_l3bitrate=NULL; }
-#endif
-
-#if defined(VIDEO_DETAILS)||defined(STREAMING_CLASSIFIER)
-      if (fp_video_logc != NULL) { fclose(fp_video_logc); fp_video_logc=NULL; }
-#endif
-
-      if (fp_http_logc != NULL) { fclose(fp_http_logc); fp_http_logc=NULL; }
-
-#ifdef HAVE_LDNS
-      if (fp_dns_logc != NULL) { fclose(fp_dns_logc); fp_dns_logc=NULL; }
-#endif
-
-#ifdef LOG_OOO
-      if (fp_dup_ooo != NULL) { fclose(fp_dup_ooo); fp_dup_ooo=NULL; }
-#endif
-    }
+  if (fp_rtp_logc != NULL) { fclose(fp_rtp_logc); fp_rtp_logc=NULL; }
+  if (fp_udp_logc != NULL) { fclose(fp_udp_logc); fp_udp_logc=NULL; }
+  if (fp_http_logc != NULL) { fclose(fp_http_logc); fp_http_logc=NULL; }
+  if (fp_dns_logc != NULL) { fclose(fp_dns_logc); fp_dns_logc=NULL; }
 }
 
 void ip_histo_stat(struct ip *pip)
@@ -1995,22 +1333,6 @@ void ip_histo_stat(struct ip *pip)
       add_histo (ip_ttl_out, (float) pip->ip_ttl);
       add_histo (ip_tos_out, (float) pip->ip_tos);
 
-      if (cloud_dst)
-       {
-         L4_bitrate.c_out[IP_TYPE] += ntohs (pip->ip_len);
-         if (pip->ip_p == IPPROTO_ICMP)
-    	   L4_bitrate.c_out[ICMP_TYPE] += ntohs (pip->ip_len);
-       }
-      else
-       {
-         L4_bitrate.nc_out[IP_TYPE] += ntohs (pip->ip_len);
-         if (pip->ip_p == IPPROTO_ICMP)
-    	   L4_bitrate.nc_out[ICMP_TYPE] += ntohs (pip->ip_len);
-       }
-#ifdef L3_BITRATE
-      L3_bit_rate_out += ntohs (pip->ip_len);
-      L3_bit_rate_ip46_out += max(ntohs(pip->ip_len),46);
-#endif
     }
   else if (!internal_src && internal_dst)
     {
@@ -2035,28 +1357,8 @@ void ip_histo_stat(struct ip *pip)
       add_histo (ip_len_in, (float) ntohs (pip->ip_len));
       add_histo (ip_ttl_in, (float) pip->ip_ttl);
       add_histo (ip_tos_in, (float) pip->ip_tos);
-      if (cloud_src)
-       {
-         L4_bitrate.c_in[IP_TYPE] += ntohs (pip->ip_len);
-         if (pip->ip_p == IPPROTO_ICMP)
-    	   L4_bitrate.c_in[ICMP_TYPE] += ntohs (pip->ip_len);
-       }
-      else
-       {
-         L4_bitrate.nc_in[IP_TYPE] += ntohs (pip->ip_len);
-         if (pip->ip_p == IPPROTO_ICMP)
-    	   L4_bitrate.nc_in[ICMP_TYPE] += ntohs (pip->ip_len);
-       }
-#ifdef L3_BITRATE
-      L3_bit_rate_in += ntohs (pip->ip_len);
-      L3_bit_rate_ip46_in += max(ntohs(pip->ip_len),46);
-#endif
     }
-#ifndef LOG_UNKNOWN
   else if (internal_src && internal_dst)
-#else
-  else
-#endif
     {
       L4_bitrate.loc[IP_TYPE] += ntohs (pip->ip_len);
       if (pip->ip_p == IPPROTO_ICMP)
@@ -2079,38 +1381,8 @@ void ip_histo_stat(struct ip *pip)
       add_histo (ip_len_loc, (float) ntohs (pip->ip_len));
       add_histo (ip_ttl_loc, (float) pip->ip_ttl);
       add_histo (ip_tos_loc, (float) pip->ip_tos);
-#ifdef L3_BITRATE
-      L3_bit_rate_loc += ntohs (pip->ip_len);
-      L3_bit_rate_ip46_loc += max(ntohs(pip->ip_len),46);
-#endif
     }
-
-
-   if (adx_engine)
-    {
-      /* If neither -N or -M are used, all addresses are internal, 
-        and the ADX histo would be empty */
-      if (!internal_src || !(net_conf || eth_conf) )
-        add_adx (EXTERNAL_ADX_HISTO, &(pip->ip_src), SRC_ADX, ntohs(pip->ip_len));
-      if (!internal_dst || !(net_conf || eth_conf) )
-        add_adx (EXTERNAL_ADX_HISTO, &(pip->ip_dst), DST_ADX, ntohs(pip->ip_len));
-
-      if (adx2_engine)
-        {
-      	  if (internal_src)
-           {
-      	    add_adx (INTERNAL_ADX_HISTO, &(pip->ip_src), SRC_ADX, ntohs(pip->ip_len));
-      	    add_adx (INTERNAL_ADX_MAX, &(pip->ip_src), SRC_ADX, ntohs(pip->ip_len));
-           }
-      	  if (internal_dst)
-           {
-      	    add_adx (INTERNAL_ADX_HISTO, &(pip->ip_dst), DST_ADX, ntohs(pip->ip_len));
-      	    add_adx (INTERNAL_ADX_MAX, &(pip->ip_dst), DST_ADX, ntohs(pip->ip_len));
-           }
-        }
-    }
-    
-} 
+}
 
 inline static int
 ip_header_stat (int phystype, 
@@ -2139,7 +1411,6 @@ ip_header_stat (int phystype,
       return 0;
     }
 
-#ifdef SUPPORT_IPV6
   if (PIP_ISV6 (pip))
     {
 
@@ -2153,21 +1424,10 @@ ip_header_stat (int phystype,
       crypto_src = crypto_ipv6 (PIP_V6(pip)->ip6_saddr);
       crypto_dst = crypto_ipv6 (PIP_V6(pip)->ip6_daddr);
 
-      cloud_src = cloud_ipv6 (PIP_V6(pip)->ip6_saddr);
-      cloud_dst = cloud_ipv6 (PIP_V6(pip)->ip6_daddr);
-      
     }				//if it isnt an IPv6 packet I do statistics thinking that it's an IPv4
   else
     {
-#endif
       /* decide wheater this is internal or external */
-      if (internal_wired)
-	{
-          /* use thedirections as hardwired by the files of nics */
-	  internal_src = coming_in;
-	  internal_dst = !coming_in;
-	}
-      else
       {
         if(mac_filter.tot_internal_eth >0 )
         {
@@ -2205,8 +1465,6 @@ ip_header_stat (int phystype,
 	}
       }
 
-      cloud_src = cloud_ip (pip->ip_src);
-      cloud_dst = cloud_ip (pip->ip_dst);
       /* .a.c. */
 
       crypto_src = crypto_ip (pip->ip_src);
@@ -2225,9 +1483,7 @@ ip_header_stat (int phystype,
       if (internal_dst)
           pip->ip_dst.s_addr ^= ip_obfuscate_mask;          
 
-#ifdef SUPPORT_IPV6
     }
-#endif
   /* update global and per-file packet counters */
   ++pnum;			/* global */
   ++(*fpnum);			/* local to this file */
@@ -2291,8 +1547,6 @@ ip_header_stat (int phystype,
   /* progress counters */
   if (printticks)
     {
-      if (CompIsCompressed ())
-	location += tlen;	/* just guess... */
       if ((((*fpnum) < 100) && ((*fpnum) % 10 == 0)) ||
 	  (((*fpnum) < 1000) && ((*fpnum) % 100 == 0)) ||
 	  (((*fpnum) < 10000) && ((*fpnum) % 1000 == 0)) ||
@@ -2305,15 +1559,7 @@ ip_header_stat (int phystype,
 	  if (debug)
 	    fprintf(fp_stdout, "%s: ", cur_filename);
 	  fprintf(fp_stdout, "Tp= %lu Tf=%lu ", (*fpnum), fcount);
-	  if (CompIsCompressed ())
-	    {
-	      frac = location / filesize * 100;
-	      if (frac <= 100)
-		fprintf(fp_stdout, "~%u%% (compressed)", frac);
-	      else
-		fprintf(fp_stdout, "~100%% + %u%% (compressed)", frac - 100);
-	    }
-	  else if (!is_stdin)
+	  if (!is_stdin)
 	    {
 	      location = ftell (stdin);
 	      frac = location / filesize * 100;
@@ -2342,66 +1588,10 @@ ip_header_stat (int phystype,
   if (ZERO_TIME (&first_packet))
    {
      first_packet = current_time;
-#ifdef L3_BITRATE
-     L3_last_time = current_time;
-     L3_bit_rate_in=0;
-     L3_bit_rate_out=0;
-     L3_bit_rate_loc=0;
-     L3_bit_rate_ip46_in=0;
-     L3_bit_rate_ip46_out=0;
-     L3_bit_rate_ip46_loc=0;
-#endif
-     adx2_last_time = current_time;
-     adx3_last_time = current_time;
    }
   last_packet = current_time;
 
-#ifdef L3_BITRATE
-  if (elapsed (L3_last_time, current_time) > L3_BITRATE_DELTA)
-   {
-     double L3_delta = elapsed (L3_last_time, current_time);
-     if (LOG_IS_ENABLED(LOG_L3_BITRATE) && fp_l3bitrate!=NULL)
-        wfprintf(fp_l3bitrate,"%.6f %.2f %.2f %.2f %.2f %.2f %.2f\n",
-            (double)current_time.tv_sec + (double) current_time.tv_usec / 1000000.0,
-             L3_bit_rate_in*8.0/L3_delta*1000.,
-             L3_bit_rate_out*8.0/L3_delta*1000.,
-             L3_bit_rate_loc*8.0/L3_delta*1000.,
-             L3_bit_rate_ip46_in*8.0/L3_delta*1000.,
-             L3_bit_rate_ip46_out*8.0/L3_delta*1000.,
-             L3_bit_rate_ip46_loc*8.0/L3_delta*1000.
-	     );
-     L3_bit_rate_in=0;
-     L3_bit_rate_out=0;
-     L3_bit_rate_loc=0;
-     L3_bit_rate_ip46_in=0;
-     L3_bit_rate_ip46_out=0;
-     L3_bit_rate_ip46_loc=0;
-     L3_last_time = current_time;     
-   }
-#endif
 
- if (adx_engine && adx2_engine)
-  { 
-   double adx2_delta = elapsed (adx2_last_time, current_time);
-   double adx3_delta = elapsed (adx3_last_time, current_time);
-
-   if (adx2_delta > adx2_bitrate_delta)
-    {
-      sprintf (curr_data_dir, "%s/%03d", basename, step);
-      swap_adx(INTERNAL_ADX_MAX);
-      max_adx(INTERNAL_ADX_HISTO,INTERNAL_ADX_MAX,adx3_delta);
-      swap_adx (INTERNAL_ADX_HISTO);
-      print_adx (INTERNAL_ADX_HISTO,adx2_delta);
-      adx2_last_time = current_time;     
-      adx3_last_time = current_time;
-    }
-   else if (adx3_delta > adx3_bitrate_delta)
-    {
-      swap_adx(INTERNAL_ADX_MAX);
-      max_adx(INTERNAL_ADX_HISTO,INTERNAL_ADX_MAX,adx3_delta);
-      adx3_last_time = current_time;
-    }
-  }
   return 1;			/*finished ok */
 }
 
@@ -2421,26 +1611,9 @@ void InitAfterFirstPacketReaded(char *filename, int file_count) {
       memset (&L4_bitrate, 0, sizeof (struct L4_bitrates));
       memset (&L7_bitrate, 0, sizeof (struct L7_bitrates));
       memset (&L7_udp_bitrate, 0, sizeof (struct L7_bitrates));
-      memset (&HTTP_bitrate, 0, sizeof (struct HTTP_bitrates));
-      memset (&WEB_bitrate, 0, sizeof (struct WEB_bitrates));
-      memset (&VIDEO_rate, 0, sizeof (struct VIDEO_rates));
-      
+
       tot_conn_TCP = 0;
       tot_conn_UDP = 0;
-    }
-
-  // init struct that rely on the time of the current packets 
-  if ((con_cat == FALSE) || (file_count == 1))
-    {
-#ifdef MSN_CLASSIFIER
-      init_msn ();
-#endif
-#ifdef YMSG_CLASSIFIER
-      init_ymsg ();
-#endif
-#ifdef XMPP_CLASSIFIER
-      init_jabber ();
-#endif
     }
 }
 
@@ -2487,15 +1660,9 @@ static int ProcessPacket(struct timeval *pckt_time,
         }
 
         if (debug > 1)
-#ifdef SUPPORT_IPV6
             fprintf(fp_stderr,
                     "Skipping packet %lu, not an IPv4/v6 packet (version:%d)\n",
                     pnum, pip->ip_v);
-#else
-        fprintf (fp_stderr,
-                "Skipping packet %lu, not an IPv4 packet (version:%d)\n",
-                pnum, pip->ip_v);
-#endif
         return 0;
     }
 
@@ -2522,14 +1689,12 @@ static int ProcessPacket(struct timeval *pckt_time,
 
     /* Statistics from LAYER 4 (TCP/UDP) HEADER */
 
-#ifdef SUPPORT_IPV6
      /* 
         IPv6 traffic is completely ignored in the L4 traffic stats, 
         if disabled from the command line.
      */
      if (PIP_ISV6(pip) && !ipv6_enabled)
        return 0;
-#endif
 
     flow_stat_code = FLOW_STAT_NONE;  /* No flow (and dup) check done yet */
 
@@ -2613,10 +1778,9 @@ static int ProcessPacket(struct timeval *pckt_time,
     }
 
     //check if is need to flush histograms
-    if ((histo_engine || rrd_engine) && elapsed (last_time_step, current_time) > GLOBALS.Max_Time_Step)
-    //if (histo_engine && elapsed (last_time_step, current_time) > 1000000)
+    if (elapsed (last_time_step, current_time) > GLOBALS.Max_Time_Step)
     {
-        flush_histo_engine();
+        flush_time_step();
     }
 
     if (force_create_new_outfiles == TRUE && first_packet_readed)
@@ -2665,52 +1829,18 @@ void ProcessFileCompleted(Bool last) {
 
     if (con_cat == TRUE && last == FALSE)
     {
-        stat_dumping_old_style ();
-        flush_histo_engine();
+        flush_time_step();
     }
     else
     {
         {
-            sprintf (curr_data_dir, "%s/LAST", basename);
             if (debug > 1)
                 fprintf (fp_stdout, "DEB: writing stats for uncomplete traces... ");
             trace_done ();
             if (do_udp)
                 udptrace_done ();
-            /*DB*/
-            /*
-               else 
-               if (((elapsed (last_skypeprint_time, last_packet) )/1000.0/1000.0) >= 5.0 )
-               {
-               fprintf (fp_stdout, "\nSono dentro !");
-               last_skypeprint_time = last_packet;
-               udptrace_part ();
-               }
-               */
-            if (debug > 1)
-                fprintf (fp_stdout, "DEB: writing addresses... ");
 
-
-            /* update average histos */
-            update_fake_histos ();
-
-            /* swap since the frozen ones are printed out */
-            swap_adx (EXTERNAL_ADX_HISTO);
-            swap_histo ();
-            if (global_histo)
-                print_all_histo (HISTO_PRINT_GLOBAL);
-
-            print_all_histo (HISTO_PRINT_CURRENT);
-            print_adx (EXTERNAL_ADX_HISTO,0.0);
-	    if (adx_engine && adx2_engine)
-	     {
-              swap_adx(INTERNAL_ADX_MAX);
-              max_adx(INTERNAL_ADX_HISTO,INTERNAL_ADX_MAX,elapsed(adx3_last_time,current_time));
-              swap_adx (INTERNAL_ADX_HISTO);
-	      print_adx(INTERNAL_ADX_HISTO,elapsed(adx2_last_time,current_time));
-             }
-	     
-            clear_all_histo ();
+            flush_histo ();
             step = 0;
 
 
@@ -2723,8 +1853,6 @@ void ProcessFileCompleted(Bool last) {
     }
 
 #ifndef TSTAT_RUNASLIB
-    /* close the input file */
-    CompCloseFile(cur_filename);
     get_stats_report(&report);
     //dump_internal_stats(&report, stdout);
     tstat_print_report(&report, fp_stdout);
@@ -2772,12 +1900,12 @@ tstat_report * tstat_close(tstat_report *report) {
 
     //write stats to file
     ProcessFileCompleted(TRUE);
+    rrdtool_close ();
     return get_stats_report(report);
 #else
     return NULL;
 #endif
 }
-
 
 
 #ifndef TSTAT_RUNASLIB
@@ -2787,20 +1915,13 @@ ProcessFile (char *filename, Bool last)
   pread_f *ppread = NULL;
   int ret = 0;
   struct ip *pip;
-  //struct tcphdr *ptcp = NULL;
   int phystype;
   void *phys;			/* physical transport header */
-  //tcp_pair *ptp;
-  int fix;
   int len;
   int tlen;
   void *plast;
   struct stat str_stat;
   long int location = 0;
-//  u_long fpnum = 0;
-/* used to count the opened flows...*/
-  //int dir;
-  //tstat_report report;
 
   /* share the current file name */
   cur_filename = filename;
@@ -2812,19 +1933,12 @@ ProcessFile (char *filename, Bool last)
 
 
 /*--------------------------------------------------- */
-#ifdef __WIN32
-  /* If the file is compressed, exit (Windows version does not support compressed dump files) */
-  if (CompOpenHeader (filename) == (FILE *) - 1)
+  /* open the input file as stdin, where libpcap reads it from */
+  if (strcmp (filename, "stdin") != 0 && freopen (filename, "r", stdin) == NULL)
     {
+      fprintf (fp_stderr, "%s %s\n", filename, strerror(errno));
       exit (-1);
     }
-#else
-  /* open the file header */
-  if (CompOpenHeader (filename) == NULL)
-    {
-      exit (-1);
-    }
-#endif /* __WIN32 */
 
   /* see how big the file is */
   is_stdin = FALSE;
@@ -2832,7 +1946,7 @@ ProcessFile (char *filename, Bool last)
 
   struct stat f_info;
   stat(filename, &f_info);
-  if (FileIsStdin (filename) || S_ISFIFO(f_info.st_mode)) 
+  if (strcmp (filename, "stdin") == 0 || S_ISFIFO(f_info.st_mode))
     {
       filesize = 1;
       is_stdin = TRUE;
@@ -2853,63 +1967,16 @@ ProcessFile (char *filename, Bool last)
     }
 
   if (live_flag == TRUE)
-    {				/*is a live capture */
-      switch (livecap_type)
-	{
-#ifdef GROK_LIVE_TCPDUMP
-	case ETH:
-	  ppread = (*file_formats[ETH_LIVE].test_func) (filename);
-	  if (debug > 0)
-	    fprintf(fp_stderr, "Capturing using '%s' (%s)\n",
-		     file_formats[ETH_LIVE].format_name,
-		     file_formats[ETH_LIVE].format_descr);
-	  break;
-#endif
-
-#ifdef GROK_ERF_LIVE
-	case DAG:
-	  ppread = (*file_formats[ERF_LIVE].test_func) (dag_dev_list);
-	  free (dag_dev_list);
-	  if (debug > 0)
-	    fprintf(fp_stderr, "Capturing using '%s' (%s)\n",
-		     file_formats[ERF_LIVE].format_name,
-		     file_formats[ERF_LIVE].format_descr);
-	  break;
-#endif
-	}
+    {				/* live capture with libpcap */
+      ppread = init_live_tcpdump (filename);
+      if (debug > 0)
+	fprintf(fp_stderr, "Capturing using libpcap\n");
     }
-
   else
     {
-      /* determine which input file format it is... */
-      ppread = NULL;
-      if (debug > 1)
-	fprintf (fp_stdout, "NUM_FILE_FORMATS: %d\n", (int) NUM_FILE_FORMATS);
-      for (fix = 0; fix < (int) NUM_FILE_FORMATS - NUM_LIVE_FORMATS; ++fix)
-	{
-	  if (debug > 0)
-	    fprintf(fp_stderr, "Checking for file format '%s' (%s)\n",
-		     file_formats[fix].format_name,
-		     file_formats[fix].format_descr);
-#ifndef __WIN32
-	  rewind (stdin);
-#endif
-	  ppread = (*file_formats[fix].test_func) (filename);	/* determine the
-								   input file format */
-	  if (ppread)
-	    {
-	      if (debug > 0)
-		fprintf(fp_stderr, "File format is '%s' (%s)\n",
-			 file_formats[fix].format_name,
-			 file_formats[fix].format_descr);
-	      break;
-	    }
-	  else if (debug > 0)
-	    {
-	      fprintf(fp_stderr, "File format is NOT '%s'\n",
-		       file_formats[fix].format_name);
-	    }
-	}
+      /* check that the input file is a pcap/pcapng file */
+      rewind (stdin);
+      ppread = is_tcpdump (filename);
 
       /* if we haven't found a reader, then we can't continue */
       if (ppread == NULL)
@@ -2939,15 +2006,7 @@ ProcessFile (char *filename, Bool last)
 	  exit (EXIT_FAILURE);
 	}
 
-#ifndef __WIN32
-      /* open the file for processing */
-      if (CompOpenFile (filename) == NULL)
-	{
-	  exit (-1);
-	}
-#endif /* __WIN32 */
-
-      /* how big is it.... (possibly compressed) */
+      /* how big is it.... */
       if (debug > 0)
 	{
 	  /* print file size */
@@ -2959,11 +2018,8 @@ ProcessFile (char *filename, Bool last)
       /* count the files */
       ++file_count;
 
-    }			/************************end else di if (filename==NULL) per la cattura live *****************/
-/*--------------------------------------------------------------------*/
+    }
 
-
-  // MGM
   // read the first packet, to get the timestamp of the trace 
   //
   // bugfix for not-matching output -- Fri Jul 14 18:51:06 CEST 2006
@@ -2983,35 +2039,9 @@ ProcessFile (char *filename, Bool last)
       return;
     }
 
-    InitAfterFirstPacketReaded(filename, file_count);
-    first_packet_readed = TRUE;
-/*
-  if ((con_cat == FALSE) || (file_count == 1))
-    create_new_outfiles (filename);
+  InitAfterFirstPacketReaded(filename, file_count);
+  first_packet_readed = TRUE;
 
-  if (con_cat == FALSE)
-    {
-      // reset bitrate stats
-      memset (&L4_bitrate, 0, sizeof (struct L4_bitrates));
-      memset (&L7_bitrate, 0, sizeof (struct L7_bitrates));
-      memset (&L7_udp_bitrate, 0, sizeof (struct L7_bitrates));
-      
-      tot_conn_TCP = 0;
-      tot_conn_UDP = 0;
-    }
-
-
-  // init struct that rely on the time of the current packets 
-#ifdef MSN_CLASSIFIER
-  init_msn ();
-#endif
-#ifdef YMSG_CLASSIFIER
-  init_ymsg ();
-#endif
-#ifdef XMPP_CLASSIFIER
-  init_jabber ();
-#endif
-*/
   /* read each packet */
   do
     {
@@ -3036,38 +2066,13 @@ QuitSig (int signum)
   fprintf (fp_stdout, "Terminating processing early on signal %d\n", signum);
   fprintf (fp_stdout, "Partial result after processing %lu packets:\n\n\n", pnum);
 
-  sprintf (curr_data_dir, "%s/LAST", basename);
-
-  if (debug > 1)
-    fprintf (fp_stdout, "DEB: writing addresses... ");
-
   if (debug > 1)
     fprintf (fp_stdout, "DEB: writing stats for uncomplete traces... ");
   trace_done ();
   if (do_udp)
     udptrace_done ();
 
-  if (debug > 1)
-    fprintf (fp_stdout, "DEB: writing stats for complete traces... ");
-
-/* update average histos */
-  update_fake_histos ();
-
-  /* swap since the frozen ones are printed out */
-  swap_histo ();
-  swap_adx (EXTERNAL_ADX_HISTO);
-  if (global_histo)
-    print_all_histo (HISTO_PRINT_GLOBAL);
-  print_all_histo (HISTO_PRINT_CURRENT);
-  print_adx (EXTERNAL_ADX_HISTO,0.0);
-
-  if (adx_engine && adx2_engine)
-   {
-     swap_adx(INTERNAL_ADX_MAX);
-     max_adx(INTERNAL_ADX_HISTO,INTERNAL_ADX_MAX,elapsed(adx3_last_time,current_time));
-     swap_adx (INTERNAL_ADX_HISTO);
-     print_adx(INTERNAL_ADX_HISTO,elapsed(adx2_last_time,current_time));
-   }
+  flush_histo ();
 
     get_stats_report(&report);
   //dump_internal_stats (&report, stderr);
@@ -3077,13 +2082,11 @@ QuitSig (int signum)
       dump_flush(TRUE);
   if (log_bitmask)
       close_all_logfiles();
+  rrdtool_close ();
   exit (EXIT_FAILURE);
 }
 
 
-#ifdef MEMDEBUG
-void memory_debug ();
-#endif
 void
 Usr1Sig (int signum)
 {
@@ -3094,9 +2097,6 @@ Usr1Sig (int signum)
   get_stats_report(&report);
   //dump_internal_stats(&report, stderr);
   tstat_print_report(&report, fp_stderr);
-#ifdef MEMDEBUG
-  memory_debug ();
-#endif
 }
 
 
@@ -3121,10 +2121,6 @@ tstat_report * get_stats_report(tstat_report *report) {
         report->tot_conn_TCP = tot_conn_TCP;
         report->tot_conn_UDP = tot_conn_UDP;
         report->num_tcp_pairs = num_tcp_pairs;
-        report->tot_adx_hash_count = tot_adx_hash_count[0];
-        report->tot_adx_list_count = tot_adx_list_count[0];
-        report->adx_search_hash_count = adx_search_hash_count[0];
-        report->adx_search_list_count = adx_search_list_count[0];
         report->wallclock = etime;
         report->pcktspersec = (int) ((double) pnum / (etime / 1000000));
         report->flowspersec = (int) ((double) fcount / (etime / 1000000));
@@ -3133,9 +2129,7 @@ tstat_report * get_stats_report(tstat_report *report) {
 }
 
 extern int crypto_total_hit,crypto_total_insert,crypto_total_miss;
-#ifdef SUPPORT_IPV6
 extern int crypto_total_hit_ipv6,crypto_total_insert_ipv6,crypto_total_miss_ipv6;
-#endif
 
 void
 tstat_print_report (tstat_report *rep, FILE *wheref)
@@ -3164,10 +2158,6 @@ tstat_print_report (tstat_report *rep, FILE *wheref)
             rep->tot_conn_TCP, rep->tot_conn_UDP);
     fprintf(wheref, "Current flow vector index: %d (%d)\n", 
             rep->num_tcp_pairs, GLOBALS.Max_TCP_Pairs);
-    fprintf(wheref, "Total adx used in hash: %ld \n", rep->tot_adx_hash_count);
-    fprintf(wheref, "Total adx used in list: %ld \n", rep->tot_adx_list_count);
-    fprintf(wheref, "Total adx hash search: %ld\n", rep->adx_search_hash_count);
-    fprintf(wheref, "Total adx list search: %ld\n", rep->adx_search_list_count);
     fprintf(wheref, "elapsed wallclock time: %s\n", elapsed2str(rep->wallclock));
     fprintf(wheref, "%d pkts/sec analyzed\n", rep->pcktspersec);
     fprintf(wheref, "%d flows/sec analyzed\n", rep->flowspersec);
@@ -3175,15 +2165,11 @@ tstat_print_report (tstat_report *rep, FILE *wheref)
     if (crypto_conf==TRUE)
      {
        fprintf(wheref, "Hash Insert: %d Hit: %d Miss: %d\n", crypto_total_insert,crypto_total_hit,crypto_total_miss);
-#ifdef SUPPORT_IPV6
        fprintf(wheref, "Hash IPv6 Insert: %d Hit: %d Miss: %d\n", crypto_total_insert_ipv6,crypto_total_hit_ipv6,crypto_total_miss_ipv6);
-#endif
      }
-#ifdef GROK_LIVE_TCPDUMP
-    if (live_flag == TRUE && livecap_type == ETH)
-        tcpdump_cleanup (wheref);
     /* print out libpcap live capture stats */
-#endif
+    if (live_flag == TRUE)
+        tcpdump_cleanup (wheref);
 }
 
 void *
@@ -3208,26 +2194,6 @@ MallocZ (int nbytes)
     }
 
   memset (ptr, 0, nbytes);	/* BZERO */
-
-  return (ptr);
-}
-
-void *
-ReallocZ (void *oldptr, int obytes, int nbytes)
-{
-  char *ptr;
-
-  ptr = realloc (oldptr, nbytes);
-  if (ptr == NULL)
-    {
-      fprintf (fp_stderr, "Realloc failed (%d bytes --> %d bytes), fatal\n",
-	       obytes, nbytes);
-      exit (EXIT_FAILURE);
-    }
-  if (obytes < nbytes)
-    {
-      memset ((char *) ptr + obytes, 0, nbytes - obytes);	/* BZERO */
-    }
 
   return (ptr);
 }
@@ -3290,7 +2256,6 @@ StringToArgv (char *buf, int *pargc, char ***pargv)
 */
 
 
-
 char **
 ArgsFromFile(char *fname, int *pargc) {
     FILE *f;
@@ -3349,20 +2314,6 @@ ArgsFromFile(char *fname, int *pargc) {
 }
 
 
-int
-fExists (const char *fname)
-{
-  FILE *f;
-  f = fopen (fname, "r");
-  if (f)
-    {
-      fclose (f);
-      return 1;
-    }
-  return 0;
-}
-
-
 static void
 CheckArguments (int *pargc, char *argv[])
 {
@@ -3398,8 +2349,7 @@ CheckArguments (int *pargc, char *argv[])
     /* make sure we found the files */
     /*
     if (filenames == NULL && 
-        live_flag == FALSE && 
-        dump_all_histo_definition == FALSE)
+        live_flag == FALSE)
     {
         BadArg (NULL, "must specify at least one file name\n");
     }
@@ -3422,24 +2372,18 @@ CheckArguments (int *pargc, char *argv[])
             ANSI_BOLD "Warning:" ANSI_RESET " -N option not specified.\n"
             "         All subnets are assumed to be internal\n");
     }
-    if (cloud_conf == FALSE) {
-        tot_cloud_nets = 0;
-        tot_cloud_netsv6 = 0;
-    }
     if (crypto_conf == FALSE) {
         tot_crypto_nets = 0;
 	tot_white_nets = 0;
         tot_crypto_netsv6 = 0;
 	tot_white_netsv6 = 0;
     }
-#ifdef HAVE_RRDTOOL
     /*-----------------------------------------------------------*/
     /* RRDtools                                                */
     /* make sure we found the files */
     if ((rrdset_path && !rrdset_conf) || (!rrdset_path && rrdset_conf))
         BadArg (NULL,
                 "You MUST specify both the configuration file (-R) AND the database path (-r))\n");
-#endif
 
     if (crypto_conf == FALSE && key_modes_set>0 )
      {
@@ -3464,66 +2408,15 @@ CheckArguments (int *pargc, char *argv[])
      }
 }
 
-#ifdef GROK_DPMI
-#define GROK_DPMI_OPT "D:"
-#else
-#define GROK_DPMI_OPT ""
-#endif
-
-#ifdef GROK_LIVE_TCPDUMP
-#define GROK_LIVE_TCPDUMP_OPT "li:E:"
-#else
-#define GROK_LIVE_TCPDUMP_OPT ""
-#endif
-
-#ifdef GROK_TCPDUMP
-#define GROK_TCPDUMP_OPT "f:"
-#else
-#define GROK_TCPDUMP_OPT ""
-#endif
-
-#ifdef HAVE_RRDTOOL
-#define HAVE_RRDTOOL_OPT "r:R:"
-#else
-#define HAVE_RRDTOOL_OPT ""
-#endif
-
-#ifdef SUPPORT_IPV6
-// #define SUPPORT_IPV6_OPT "6:y:"
-#define SUPPORT_IPV6_OPT "6"
-// Currently empty, we leave it as a placeholder for future IPv6 specific options
-#else
-#define SUPPORT_IPV6_OPT ""
-#endif
-
-#ifdef HAVE_ZLIB
-#define HAVE_ZLIB_OPT "ZP"
-#else
-#define HAVE_ZLIB_OPT ""
-#endif
-
-#define GLOBAL_OPTS "A:B:G:N:M:C:Y:W:H:s:T:z:gdhtucSLvw320"
-
-#ifdef DNS_CACHE_PROCESSOR
-#define DNS_FILTER_OPT "QXF:"
-#else
-#define DNS_FILTER_OPT ""
-#endif
+/* command line options */
+#define TSTAT_OPTS "li:E:f:r:R:6QXF:A:G:N:M:Y:W:H:s:T:z:gdhtucSLvw0"
 
 static void
 ParseArgs (int *pargc, char *argv[])
 {
-  char bayes_dir[128];
-  sprintf (bayes_dir, "skype");
-  histo_set_conf (NULL);
   struct stat finfo;
   char *tmpstring;
 
-#ifdef GROK_ERF_LIVE
-  int num_dev;
-  int dim;
-  char *ptr_help;
-#endif
   int option_index;
   int c;
   static int has_keyfile;
@@ -3533,9 +2426,6 @@ ParseArgs (int *pargc, char *argv[])
   static struct option long_options[] = {
     /* {option_name,has_arg(0=none,1=recquired,2=optional),flag,return_value} */
     /* see man getopt for details                                             */
-#ifdef GROK_ERF_LIVE
-    {"dag", optional_argument, 0, 1},
-#endif
     {"keyfile", required_argument, &has_keyfile, 1},
     {"keybase64", required_argument, &has_keybase64, 1},
     {"keyvalue", required_argument, &has_keyvalue, 1},
@@ -3549,10 +2439,7 @@ ParseArgs (int *pargc, char *argv[])
   //check '-z' option immediatelly so we can redirect all the messages
   while(1) {
     c = getopt_long (*pargc, argv,
-		     GROK_TCPDUMP_OPT GROK_LIVE_TCPDUMP_OPT GROK_DPMI_OPT
-		     HAVE_RRDTOOL_OPT SUPPORT_IPV6_OPT HAVE_ZLIB_OPT
-             DNS_FILTER_OPT
-		     GLOBAL_OPTS, long_options, &option_index);
+		     TSTAT_OPTS, long_options, &option_index);
     if (c == -1)
         break;
     if (c == 'z') {
@@ -3573,9 +2460,7 @@ ParseArgs (int *pargc, char *argv[])
   //check if we need to override globals
   while(1) {
     c = getopt_long (*pargc, argv,
-		     GROK_TCPDUMP_OPT GROK_LIVE_TCPDUMP_OPT GROK_DPMI_OPT
-		     HAVE_RRDTOOL_OPT SUPPORT_IPV6_OPT HAVE_ZLIB_OPT
-		     GLOBAL_OPTS, long_options, &option_index);
+		     TSTAT_OPTS, long_options, &option_index);
     if (c == -1)
         break;
     if (c == 'G') {
@@ -3604,10 +2489,7 @@ ParseArgs (int *pargc, char *argv[])
   while (1)
     {
       c = getopt_long (*pargc, argv,
-		     GROK_TCPDUMP_OPT GROK_LIVE_TCPDUMP_OPT GROK_DPMI_OPT
-		     HAVE_RRDTOOL_OPT SUPPORT_IPV6_OPT HAVE_ZLIB_OPT
-             DNS_FILTER_OPT
-		     GLOBAL_OPTS, long_options, &option_index);
+		     TSTAT_OPTS, long_options, &option_index);
 
       if (c == -1) {
 	    break;
@@ -3653,13 +2535,6 @@ ParseArgs (int *pargc, char *argv[])
             ANSI_BOLD "Warning:" ANSI_RESET " Both -M and -N options specified.\n"
             "         Ethernet filter is used and -N addresses are ineffective\n");
 	   }
-#ifndef SUPPORT_IPV6
-         if (tot_internal_netsv6!=0)
-	  {
-            fprintf(fp_stdout, 
-               ANSI_BOLD "Warning:" ANSI_RESET " IPv6 networks declared in the -N file but IPv6 support is disabled\n");
-	  }
-#endif
          if (tot_internal_nets == 0)
 	  {
 	    internal_net_mask[0] = 0;
@@ -3679,7 +2554,6 @@ ParseArgs (int *pargc, char *argv[])
                ANSI_BOLD "Warning:" ANSI_RESET " -N option contains no IPv4 network.\n"
                "         All IPv4 subnets are assumed to be internal\n");
 	  }
-#ifdef SUPPORT_IPV6
          if (tot_internal_netsv6==0)
 	  {
         internal_net_maskv6[0] = 0;
@@ -3697,19 +2571,6 @@ ParseArgs (int *pargc, char *argv[])
                ANSI_BOLD "Warning:" ANSI_RESET " -N option contains no IPv6 network.\n"
                "         All IPv6 subnets are assumed to be internal\n");
 	  }
-#endif
-	  break;
-	case 'C':
-	  /* -C file */
-	  tmpstring = strdup (optarg);
-	  if (!LoadCloudNets (tmpstring))
-	    {
-	      fprintf (fp_stderr, 
-            "Error while loading configuration\n"
-	        "Wrong or missing %s\n", tmpstring);
-	      exit (1);
-	    }
-	  cloud_conf = TRUE;
 	  break;
 	case 'Y':
 	  /* -Y file */
@@ -3762,21 +2623,10 @@ ParseArgs (int *pargc, char *argv[])
 	      }
 	    }
 	  break;
-#ifdef SUPPORT_IPV6
 	case '6':
 	  ipv6_enabled = FALSE;
 	  fprintf (fp_stdout, ANSI_BOLD "IPv6 traffic ignored" ANSI_RESET "\n");
 	  break;
-#endif
-#ifdef HAVE_ZLIB
-	case 'Z':
-	  zlib_logs = TRUE;
-	  break;
-	case 'P':
-	  zlib_dump = TRUE;
-	  break;
-#endif
-#ifdef DNS_CACHE_PROCESSOR
 	case 'X':
 	  dns_enabled = FALSE;
 	  fprintf (fp_stdout, ANSI_BOLD "DNS engine disabled" ANSI_RESET "\n");
@@ -3791,44 +2641,21 @@ ParseArgs (int *pargc, char *argv[])
         dns_namefilter_specified = TRUE;
 	  }
 	  break;
-#endif
 	case 'd':
 	  ++debug;
 	  break;
 	case 'g':
-	  global_histo = TRUE;
+	case 'H':
+	case 'S':
+	  /* removed text histograms: accepted and ignored for compatibility
+	     with older configuration files */
+	  fprintf (fp_stderr, "Warning: option -%c is obsolete and has been ignored\n", c);
 	  break;
 	case 'h':
 	  Usage ();
 	  break;
-	case 'H':
-	  if (!strcmp (optarg, "?"))
-	    {
-	      dump_all_histo_definition = TRUE;
-	    }
-	  else
-	    {
-	      histo_set_conf (optarg);
-	    }
-        histo_engine_log = TRUE;
-	  break;
-#ifdef GROK_DPMI
-	case 'D':
-	  {
-	    tmpstring = strdup (optarg);
-	    if (!dpmi_parse_config (tmpstring))
-	      {
-		fprintf (fp_stderr, "Error while loading DPMI configuration\n");
-		exit (1);
-	      }
-	  }
-	  break;
-#endif /* GROK_DPMI */
-
-#ifdef GROK_LIVE_TCPDUMP
 	case 'l':
 	  live_flag = TRUE;
-	  livecap_type = ETH;
 	  break;
 	case 'i':		/* choose the live capture interface card */
 	  /* -ieth0 */
@@ -3851,7 +2678,6 @@ ParseArgs (int *pargc, char *argv[])
 	      }
 	    }
 	  break;
-#endif /* GROK_LIVE_TCPDUMP */
 	case 't':
 	  printticks = TRUE;
 	  break;
@@ -3868,14 +2694,11 @@ ParseArgs (int *pargc, char *argv[])
 	  if (debug > 1)
 	    fprintf (fp_stdout, "basenamedir set to %s\n", basenamedir);
 	  break;
-#ifdef GROK_TCPDUMP
 	case 'f':		/* pcap filter file */
 	  /* -ffilter_file */
 	  filter_filename = strdup (optarg);
 	  filter_specified = TRUE;
 	  break;
-#endif /* GROK_LIVE_TCPDUMP */
-#ifdef HAVE_RRDTOOL
 		/*-----------------------------------------------------------*/
 	  /* RRDtools                                                  */
 	case 'r':
@@ -3926,11 +2749,6 @@ ParseArgs (int *pargc, char *argv[])
 	  }
 	  break;
 		/*-----------------------------------------------------------*/
-#endif
-	case 'B':
-	  sprintf (bayes_dir, "%s", optarg);
-	  bayes_engine = TRUE;
-	  break;
 
     case 'T':
       sprintf(runtime_conf_fname, "%s", optarg);
@@ -3949,17 +2767,9 @@ ParseArgs (int *pargc, char *argv[])
       break;
 
 
-	case 'S':
-	  histo_engine = FALSE;
-	  break;
 	case 'L':
 	  log_bitmask = 0;
 	  break;
-#ifdef L3_BITRATE
-      case '3':
-          log_bitmask |= LOG_L3_BITRATE;
-	  break;
-#endif
 	case '0':
 	  strict_privacy = TRUE;
 	  break;
@@ -3974,54 +2784,10 @@ ParseArgs (int *pargc, char *argv[])
 	  warn_printbad_syn_fin_seq = TRUE;
 	  warn_ooo = TRUE;
 	  break;
-	case '2':
-	  two_files = 2;
-	  internal_wired = TRUE;
-	  break;
 /* process long options */
 	case 1:
 	  switch (option_index)
 	    {
-#ifdef GROK_ERF_LIVE
-	    case 0:
-	      dim = DAG_NAME_BUFSIZE;
-	      dag_dev_list = (char *) MallocZ (dim);
-	      num_dev = 0;
-	      live_flag = TRUE;
-	      livecap_type = DAG;
-	      while (argv[optind] != NULL && *argv[optind] != '-')
-		{
-		  if (num_dev == 4)
-		    {
-		      fprintf (fp_stderr,
-			       "Error: are only supported at most four DAG card\n");
-		      exit (1);
-		    }
-		  else if (strlen (argv[optind]) + strlen (dag_dev_list) >
-			   dim)
-		    {
-		      dim += DAG_NAME_BUFSIZE;
-		      ptr_help = (char *) MallocZ (dim);
-		      strncpy (ptr_help, dag_dev_list, dim);
-		      free (dag_dev_list);
-		      dag_dev_list = ptr_help;
-		    }
-		  strcat (dag_dev_list, argv[optind]);
-		  strcat (dag_dev_list, " ");
-		  num_dev++;
-		  optind++;
-		}
-	      if (num_dev == 0)
-		{
-		  strncpy (dag_dev_list, "/dev/dag0 ", dim);	/* default DAG card */
-		  num_dev++;
-		}
-	      else if (num_dev == 2)
-		{
-		  internal_wired = TRUE;
-		}
-	      break;
-#endif /* GROK_ERF_LIVE */
 
 	    default:
 	      fprintf (fp_stderr, "\n Error in parsing long opt %d\n", option_index);
@@ -4064,9 +2830,6 @@ ParseArgs (int *pargc, char *argv[])
 	default:
       Help();
       fprintf (fp_stderr, "option -%c not valid or missing option argument\n", c);
-      if (c == '3') {
-          fprintf (fp_stderr, "check if L3_BITMASK is enabled in Makefile.conf\n");
-      }
 	  exit (EXIT_FAILURE);
 	}
     }
@@ -4074,21 +2837,6 @@ ParseArgs (int *pargc, char *argv[])
   *pargc -= optind;
   if (*pargc)
     filenames = &argv[optind];
-
-
-  if (bayes_engine)
-    {
-      char bayes_conf[256];
-      sprintf (bayes_conf, "%s/pktsize.conf", bayes_dir);
-      bayes_settings_pktsize =
-	bayes_init (bayes_conf, NULL, (void *) skype_feat2code);
-
-      sprintf (bayes_conf, "%s/avgipg.conf", bayes_dir);
-      bayes_settings_avgipg =
-	bayes_init (bayes_conf, NULL, (void *) skype_feat2code);
-    }
-
-  return;
 }
 
 int
@@ -4316,27 +3064,6 @@ LoadInternalNets (char *file) {
 }
 
 int
-LoadCloudNets (char *file) {
-    FILE *fp;
-    int retval;
-
-    fp = fopen(file, "r");
-    if (!fp) {
-        fprintf(fp_stderr, "Unable to open file '%s'\n", file);
-        return 0;
-    }
-
-    retval = ParseNetFile(fp,"cloud",GLOBALS.Max_Cloud_Hosts,
-			     cloud_net_list,cloud_net_listv6,
-			     cloud_net_mask,cloud_net_maskv6,
-			     &tot_cloud_nets,&tot_cloud_netsv6);
-   
-    fclose(fp);
-    
-    return retval;
-}
-
-int
 LoadCryptoNets (char *file) {
     FILE *fp;
     int retval;
@@ -4429,83 +3156,6 @@ LoadInternalEth (char *file) {
     return 1;
 }
 
-/* the memcpy() function that gcc likes to stuff into the program has alignment
-   problems, so here's MY version.  It's only used for small stuff, so the
-   copy should be "cheap", but we can't be too fancy due to alignment boo boos */
-
-void *
-MemCpy_TCPTRACE (void *vp1, void *vp2, size_t n)
-{
-  char *p1 = vp1;
-  char *p2 = vp2;
-
-  while (n-- > 0)
-    *p1++ = *p2++;
-
-  return (vp1);
-}
-
-/*
-
-.:nonsns:.  proposes long-wise optimization of the memcpy 
-function, alternative to the one used by the original version
-of MemCpy_TCPTRACE. A benchmarking study conducted following
-the guidelines described in  (and using the code provided by
-authors) yield the following results.
-
-	Brian W. Kernighan and Christopher J. Van Wyk,
-	``Timing trials, or the trials of timing: experiments with scripting and 
-	user-interface languages'', Software Practice & Experience archive
-	Volume 28 ,  Issue 8, July 1998, pp.819 - 843  
-
-
-len=1
-Null_Loop          170000    170000    190000    210000    170000   0.00
-memcpy_system     4940000   4930000   4930000   4940000   4920000   0.05
-MemCpy_OPTIMIZED  2030000   2010000   2010000   2000000   2010000   0.02
-MemCpy_TCPTRACE   1850000   1850000   1840000   1850000   1860000   0.02
-
-len=64
-Null_Loop          170000    160000    170000	 170000    170000   0.00 
-memcpy_system     8470000   8440000   8440000	8460000   8490000   0.08 
-MemCpy_OPTIMIZED  8210000   7990000   8130000	8040000   8080000   0.08 
-MemCpy_TCPTRACE  29360000  29250000  29150000  29220000  29390000   0.29 
-
-*/
-
-void *
-MemCpy_OPTIMIZED (void *vp1, void *vp2, size_t n)
-{
-  static unsigned long *_lp1, *_lp2;
-  static unsigned char *_cp1, *_cp2;
-  static size_t _n, _last;
-
-  _last = n & (SIZEOF_UNSIGNED_LONG_INT - 1);
-  if ((_n = (n / SIZEOF_UNSIGNED_LONG_INT)))
-    {
-      _lp1 = vp1;
-      _lp2 = vp2;
-      while (_n-- > 0)
-	*_lp1++ = *_lp2++;
-      _cp1 = (unsigned char *) _lp1;
-      _cp2 = (unsigned char *) _lp2;
-
-    }
-  else
-    {
-      _cp1 = vp1;
-      _cp2 = vp2;
-    }
-
-  while (_last-- > 0)
-    *_cp1++ = *_cp2++;
-
-  return (vp1);
-}
-
-
-
-
 /* 
  * Check if the IP adx is included in the internal nets
  */
@@ -4530,29 +3180,6 @@ internal_ip (struct in_addr adx)
 }
 
 /* 
- * Check if the IP adx is included in the cloud nets
- */
-
-Bool
-cloud_ip (struct in_addr adx)
-{
-  int i;
-
-  //fprintf(fp_stdout, "Checking %s \n",inet_ntoa(adx));
-  for (i = 0; i < tot_cloud_nets; i++)
-    {
-      //fprintf(fp_stdout, " Against: %s \n",inet_ntoa(cloud_net_list[i]));
-      if ((adx.s_addr & cloud_net_mask[i]) == cloud_net_list[i].s_addr)
-	{
-	  //fprintf(fp_stdout, "Cloud: %s\n",inet_ntoa(adx));
-	  return 1;
-	}
-    }
-  //fprintf(fp_stdout, "Not-cloud: %s\n",inet_ntoa(adx));
-  return 0;
-}
-
-/* 
  * Check if the IP adx is included in the crypto nets
  */
 
@@ -4570,10 +3197,10 @@ crypto_ip (struct in_addr adx)
 	  //fprintf(fp_stdout, "Crypto: %s\n",inet_ntoa(adx));
           for (j = 0; j < tot_white_nets; j++)
            {
-             //fprintf(fp_stdout, " Against: %s \n",inet_ntoa(cloud_net_list[i]));
+             //fprintf(fp_stdout, " Against: %s \n",inet_ntoa(white_net_list[j]));
              if ((adx.s_addr & white_net_mask[j]) == white_net_list[j].s_addr)
 	      {
-	        //fprintf(fp_stdout, "Cloud: %s\n",inet_ntoa(adx));
+	        //fprintf(fp_stdout, "White: %s\n",inet_ntoa(adx));
 	        return 0;
 	      }
            }
@@ -4608,48 +3235,17 @@ internal_eth (uint8_t *eth_addr, eth_filter *filter)
   return 0;
 }
 
-void
-stat_dumping_old_style ()
-{
-
-/* update average histos */
-  update_fake_histos ();
-
-/* swap since the frozen ones are printed out */
-  swap_adx (EXTERNAL_ADX_HISTO);
-  swap_histo ();
-  sprintf (curr_data_dir, "%s/%03d", basename, step);
-
-  // update GLOBAL every hour
-  if (global_histo && step && !step % 1200)
-    print_all_histo (HISTO_PRINT_GLOBAL);
-  print_all_histo (HISTO_PRINT_CURRENT);
-  print_adx (EXTERNAL_ADX_HISTO,0.0);
-
-
-
-  clear_all_histo ();
-
-
-  step++;
-
-#ifndef TSTAT_RUNASLIB
-  /* In case we are processing live streams, create a new dir every
-     DIRS steps */
-  if (step >= GLOBALS.Dirs && is_stdin)
-#else
-  /* is_stdin is not set when running as libtstat */
-    if (step >= GLOBALS.Dirs)
-#endif
-    {
-      create_new_outfiles (NULL, FALSE);
-      step = 0;
-    }
-}
-
 /****************************************************
  * AF: these functions are for parsing runtime.conf
  ****************************************************/
+
+/* Logs of removed features, accepted and ignored for compatibility
+   with older configuration files */
+static char *obsolete_log_params[] = {
+  "log_skype_complete", "log_chat_complete", "log_chat_messages",
+  "log_video_complete", "histo_engine",
+  NULL
+};
 
 /* this function is to apply the same logic to different log files
  * Note: 'log_type' is one of the LOG_XXX values in tstat.h
@@ -4699,23 +3295,8 @@ void log_parse_ini_arg(char *param_name, param_value enabled) {
         exit(1);
     }
 
-    //histogram engine
-    if (strcmp(param_name, "histo_engine") == 0) {
-        //need to flush histo engine
-//        if (((histo_engine && !enabled) || (!histo_engine && enabled)) &&
-//            first_packet_readed) {
-//            flush_histo_engine();
-//        }
-        //stdout messages
-        if (!histo_engine_log && enabled.value.ivalue)
-            fprintf(fp_stdout, "[%s] Enabling histo engine logs\n", Timestamp());
-        else if (histo_engine_log && !(enabled.value.ivalue))
-            fprintf(fp_stdout, "[%s] Disabling histo engine logs\n", Timestamp());
-        histo_engine_log = enabled.value.ivalue;
-    }
-    
     //rrd engine
-    else if (strcmp(param_name, "rrd_engine") == 0) {
+    if (strcmp(param_name, "rrd_engine") == 0) {
         //stdout messages
         if (!rrd_engine && enabled.value.ivalue)
             fprintf(fp_stdout, "[%s] Enabling rrd engine logs\n", Timestamp());
@@ -4736,62 +3317,47 @@ void log_parse_ini_arg(char *param_name, param_value enabled) {
     else if (strcmp(param_name, "log_mm_complete") == 0) {
        log_parse_ini_arg_log_bitmask(fp_rtp_logc, LOG_MM_COMPLETE, "log_mm_complete", enabled.value.ivalue);
     }
-    else if (strcmp(param_name, "log_skype_complete") == 0) {
-#ifdef SKYPE_CLASSIFIER
-        log_parse_ini_arg_log_bitmask(fp_skype_logc, LOG_SKYPE_COMPLETE, "log_skype_complete", enabled.value.ivalue);
-#endif
-    }
-    else if (strcmp(param_name, "log_chat_complete") == 0) {
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-        log_parse_ini_arg_log_bitmask(fp_chat_logc, LOG_CHAT_COMPLETE, "log_chat_complete", enabled.value.ivalue);
-#endif
-    }
-    else if (strcmp(param_name, "log_chat_messages") == 0) {
-#if defined(MSN_CLASSIFIER) || defined(YMSG_CLASSIFIER) || defined(XMPP_CLASSIFIER)
-        log_parse_ini_arg_log_bitmask(fp_chat_log_msg, LOG_CHAT_MESSAGES, "log_chat_messages", enabled.value.ivalue);
-#endif
-    }
-#if defined(VIDEO_DETAILS)||defined(STREAMING_CLASSIFIER)
-    else if (strcmp(param_name, "log_video_complete") == 0) {
-        log_parse_ini_arg_log_bitmask(fp_video_logc, LOG_VIDEO_COMPLETE, "log_video_complete", enabled.value.ivalue);
-    }
-#endif
     else if (strcmp(param_name, "log_http_complete") == 0) {
         log_parse_ini_arg_log_bitmask(fp_http_logc, LOG_HTTP_COMPLETE, "log_http_complete", enabled.value.ivalue);
     }
-#ifdef LOG_PERIODIC
     else if (strcmp(param_name, "log_tcp_periodic") == 0) {
         log_parse_ini_arg_log_bitmask(fp_periodic_logc, LOG_TCP_PERIODIC, "log_tcp_periodic", enabled.value.ivalue);
     }
     else if (strcmp(param_name, "log_udp_periodic") == 0) {
         log_parse_ini_arg_log_bitmask(fp_periodic_udp_logc, LOG_UDP_PERIODIC, "log_udp_periodic", enabled.value.ivalue);
     }
-#endif
-
-
     else if (strcmp(param_name, "log_dns_complete") == 0) {
-#ifdef HAVE_LDNS
         log_parse_ini_arg_log_bitmask(fp_dns_logc, LOG_DNS_COMPLETE, "log_dns_complete", enabled.value.ivalue);
-#endif
     }
-    else {
+    else if (!is_obsolete_param(param_name, obsolete_log_params)) {
         fprintf(fp_stderr, "ini reader: '%s' - unknown keyword\n", param_name);
         exit(1);
     }
 }
 
-void flush_histo_engine(void) {
+/* Called at the end of every time step (GLOBALS.Max_Time_Step) */
+void flush_time_step(void) {
 
-    stat_dumping_old_style ();
-    
+    flush_histo ();
+
+    step++;
+#ifndef TSTAT_RUNASLIB
+    /* In case we are processing live streams, create a new dir every
+       DIRS steps */
+    if (step >= GLOBALS.Dirs && is_stdin)
+#else
+    /* is_stdin is not set when running as libtstat */
+    if (step >= GLOBALS.Dirs)
+#endif
+      {
+        create_new_outfiles (NULL, FALSE);
+        step = 0;
+      }
+
     last_time_step = current_time;
     // reset bitrate stats 
     memset (&L3_bitrate, 0, sizeof (struct L3_bitrates));
     memset (&L4_bitrate, 0, sizeof (struct L4_bitrates));
     memset (&L7_bitrate, 0, sizeof (struct L7_bitrates));
     memset (&L7_udp_bitrate, 0, sizeof (struct L7_bitrates));
-    memset (&HTTP_bitrate, 0, sizeof (struct HTTP_bitrates));
-    memset (&WEB_bitrate, 0, sizeof (struct WEB_bitrates));
-    memset (&TLS_bitrate, 0, sizeof (struct TLS_bitrates));
-    memset (&VIDEO_rate, 0, sizeof (struct VIDEO_rates));
 }

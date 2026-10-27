@@ -16,7 +16,6 @@
  *
 */
 
-#include <stdio.h>
 #include "tstat.h"
 
 /* 
@@ -42,10 +41,6 @@
 struct double_histo_list *ip_bitrate_in = NULL;
 struct double_histo_list *ip_bitrate_out = NULL;
 struct double_histo_list *ip_bitrate_loc = NULL;
-struct double_histo_list *ip_bitrate_c_in = NULL;
-struct double_histo_list *ip_bitrate_c_out = NULL;
-struct double_histo_list *ip_bitrate_nc_in = NULL;
-struct double_histo_list *ip_bitrate_nc_out = NULL;
 
 
 struct double_histo_list *ip_protocol_in = NULL;
@@ -65,7 +60,6 @@ struct double_histo_list *ip_tos_in = NULL;
 struct double_histo_list *ip_tos_loc = NULL;
 
 //IPv6 module
-#ifdef SUPPORT_IPV6
 
 struct double_histo_list *ip6_protocol_in = NULL;
 struct double_histo_list *ip6_hop_limit_in = NULL;
@@ -83,7 +77,6 @@ struct double_histo_list *ip6_plen_loc = NULL;
 struct double_histo_list *icmpv6_type_in = NULL;
 struct double_histo_list *icmpv6_type_loc = NULL;
 struct double_histo_list *icmpv6_type_out = NULL;
-#endif
 //IPv6 module
 
 
@@ -104,10 +97,6 @@ struct double_histo_list *tcp_port_syndst_loc = NULL;
 struct double_histo_list *tcp_bitrate_in = NULL;
 struct double_histo_list *tcp_bitrate_out = NULL;
 struct double_histo_list *tcp_bitrate_loc = NULL;
-struct double_histo_list *tcp_bitrate_c_in = NULL;
-struct double_histo_list *tcp_bitrate_c_out = NULL;
-struct double_histo_list *tcp_bitrate_nc_in = NULL;
-struct double_histo_list *tcp_bitrate_nc_out = NULL;
 
 struct double_histo_list *tcp_opts_SACK = NULL;
 struct double_histo_list *tcp_opts_WS = NULL;
@@ -155,10 +144,6 @@ struct double_histo_list *tcp_rtt_avg_loc = NULL;
 struct double_histo_list *tcp_rtt_avg_c2s = NULL;
 struct double_histo_list *tcp_rtt_avg_s2c = NULL;
 
-struct double_histo_list *tcp_rtt_c_avg_out = NULL;
-struct double_histo_list *tcp_rtt_c_avg_in = NULL;
-struct double_histo_list *tcp_rtt_nc_avg_out = NULL;
-struct double_histo_list *tcp_rtt_nc_avg_in = NULL;
 
 /* v.1.2.0 -----------------------------------*/
 
@@ -241,10 +226,6 @@ struct double_histo_list *tcp_thru_s2c = NULL;
 
 struct double_histo_list *tcp_thru_lf_c2s = NULL;
 struct double_histo_list *tcp_thru_lf_s2c = NULL;
-struct double_histo_list *tcp_thru_lf_c_c2s = NULL;
-struct double_histo_list *tcp_thru_lf_c_s2c = NULL;
-struct double_histo_list *tcp_thru_lf_nc_c2s = NULL;
-struct double_histo_list *tcp_thru_lf_nc_s2c = NULL;
 
 struct double_histo_list *tcp_interrupted = NULL;
 
@@ -273,10 +254,6 @@ struct double_histo_list *udp_port_flow_dst = NULL;
 struct double_histo_list *udp_bitrate_in = NULL;
 struct double_histo_list *udp_bitrate_out = NULL;
 struct double_histo_list *udp_bitrate_loc = NULL;
-struct double_histo_list *udp_bitrate_c_in = NULL;
-struct double_histo_list *udp_bitrate_c_out = NULL;
-struct double_histo_list *udp_bitrate_nc_in = NULL;
-struct double_histo_list *udp_bitrate_nc_out = NULL;
 
       /* stream histograms */
 
@@ -400,84 +377,17 @@ struct double_histo_list *rtcp_rtt_out = NULL;
 struct double_histo_list *rtcp_rtt_loc = NULL;
 
 /* global bitrate */
-struct double_histo_list *g_tcp_bitrate_in = NULL;
-struct double_histo_list *g_tcp_bitrate_loc = NULL;
-struct double_histo_list *g_tcp_bitrate_out = NULL;
-struct double_histo_list *g_udp_bitrate_in = NULL;
-struct double_histo_list *g_udp_bitrate_loc = NULL;
-struct double_histo_list *g_udp_bitrate_out = NULL;
-struct double_histo_list *g_icmp_bitrate_in = NULL;
-struct double_histo_list *g_icmp_bitrate_loc = NULL;
-struct double_histo_list *g_icmp_bitrate_out = NULL;
-struct double_histo_list *g_other_bitrate_in = NULL;
-struct double_histo_list *g_other_bitrate_loc = NULL;
-struct double_histo_list *g_other_bitrate_out = NULL;
 
 /* Application stat */
 
 struct double_histo_list *L7_TCP_num_out = NULL;
 struct double_histo_list *L7_TCP_num_in = NULL;
 struct double_histo_list *L7_TCP_num_loc = NULL;
-struct double_histo_list *L7_TCP_num_c_out = NULL;
-struct double_histo_list *L7_TCP_num_c_in = NULL;
-struct double_histo_list *L7_TCP_num_nc_out = NULL;
-struct double_histo_list *L7_TCP_num_nc_in = NULL;
 
 struct double_histo_list *L7_UDP_num_out = NULL;
 struct double_histo_list *L7_UDP_num_in = NULL;
 struct double_histo_list *L7_UDP_num_loc = NULL;
-struct double_histo_list *L7_UDP_num_c_out = NULL;
-struct double_histo_list *L7_UDP_num_c_in = NULL;
-struct double_histo_list *L7_UDP_num_nc_out = NULL;
-struct double_histo_list *L7_UDP_num_nc_in = NULL;
 
-struct double_histo_list *L7_HTTP_num_out = NULL;
-struct double_histo_list *L7_HTTP_num_in = NULL;
-struct double_histo_list *L7_HTTP_num_loc = NULL;
-struct double_histo_list *L7_HTTP_num_c_out = NULL;
-struct double_histo_list *L7_HTTP_num_c_in = NULL;
-struct double_histo_list *L7_HTTP_num_nc_out = NULL;
-struct double_histo_list *L7_HTTP_num_nc_in = NULL;
-
-struct double_histo_list *http_bitrate_out = NULL;
-struct double_histo_list *http_bitrate_in = NULL;
-struct double_histo_list *http_bitrate_loc = NULL;
-struct double_histo_list *http_bitrate_c_out = NULL;
-struct double_histo_list *http_bitrate_c_in = NULL;
-struct double_histo_list *http_bitrate_nc_out = NULL;
-struct double_histo_list *http_bitrate_nc_in = NULL;
-
-struct double_histo_list *L7_WEB_num_out = NULL;
-struct double_histo_list *L7_WEB_num_in = NULL;
-struct double_histo_list *L7_WEB_num_loc = NULL;
-
-struct double_histo_list *web_bitrate_out = NULL;
-struct double_histo_list *web_bitrate_in = NULL;
-struct double_histo_list *web_bitrate_loc = NULL;
-
-struct double_histo_list *L7_TLS_num_out = NULL;
-struct double_histo_list *L7_TLS_num_in = NULL;
-struct double_histo_list *L7_TLS_num_loc = NULL;
-
-struct double_histo_list *tls_bitrate_out = NULL;
-struct double_histo_list *tls_bitrate_in = NULL;
-struct double_histo_list *tls_bitrate_loc = NULL;
-
-struct double_histo_list *L7_VIDEO_num_out = NULL;
-struct double_histo_list *L7_VIDEO_num_in = NULL;
-struct double_histo_list *L7_VIDEO_num_loc = NULL;
-struct double_histo_list *L7_VIDEO_num_c_out = NULL;
-struct double_histo_list *L7_VIDEO_num_c_in = NULL;
-struct double_histo_list *L7_VIDEO_num_nc_out = NULL;
-struct double_histo_list *L7_VIDEO_num_nc_in = NULL;
-
-struct double_histo_list *video_rate_out = NULL;
-struct double_histo_list *video_rate_in = NULL;
-struct double_histo_list *video_rate_loc = NULL;
-struct double_histo_list *video_rate_c_out = NULL;
-struct double_histo_list *video_rate_c_in = NULL;
-struct double_histo_list *video_rate_nc_out = NULL;
-struct double_histo_list *video_rate_nc_in = NULL;
 
 /* IPv4/IPv6 statistics */
 struct double_histo_list *L3_protocol_out = NULL;
@@ -486,23 +396,3 @@ struct double_histo_list *L3_protocol_loc = NULL;
 struct double_histo_list *L3_bitrate_out = NULL;
 struct double_histo_list *L3_bitrate_in = NULL;
 struct double_histo_list *L3_bitrate_loc = NULL;
-
-/* profiling */
-struct double_histo_list *profile_cpu = NULL;
-struct double_histo_list *profile_flows = NULL;
-struct double_histo_list *profile_tcpdata = NULL;
-win_stat ave_win_usr_cpu;
-win_stat ave_win_sys_cpu;
-double max_cpu;
-win_stat active_flows_win_TCP;
-win_stat active_flows_win_UDP;
-win_stat missed_flows_win_TCP;
-win_stat missed_flows_win_UDP;
-double tcpdata_received_total;
-double tcpdata_missed_total;
-
-struct double_histo_list *profile_trash = NULL;
-
-/* Chat stat */
-
-struct double_histo_list *chat_flow_num = NULL;

@@ -14,85 +14,41 @@
  * Tstat is deeply based on TCPTRACE. The authors would like to thank
  * Shawn Ostermann for the development of TCPTRACE.
  *
- * v1.2.0 memcpy optimization
 */
-
-/* add autoconf header file */
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif
 
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <sys/time.h>
-#include <sys/socket.h>
-#include <net/if.h>
-#if __FreeBSD__ >= 2
-#include <osreldate.h>
-#if __FreeBSD_version >= 300000
-#include <net/if_var.h>
-#endif
-#endif
-#include <netinet/in.h>
-#include <netinet/in_systm.h>
-#include <arpa/inet.h>
-#include <netinet/if_ether.h>
-#ifdef linux
-#include <netinet/ether.h>
-#endif
-#include <netinet/ip.h>
-#ifdef __ANDROID__
-#include "tstat_android_tcp.h"
-#include "tstat_android_ether.h"
-#else
-#include <netinet/tcp.h>
-#endif
-#include <netinet/udp.h>
-#include <netdb.h>
-#include <ctype.h>
-#include <signal.h>
-#include <sys/stat.h>
-#include <stdarg.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <signal.h>
+#include <ctype.h>
 #include <math.h>
 #include <errno.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <netinet/in_systm.h>
+#include <netinet/if_ether.h>
+#include <netinet/ether.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <arpa/inet.h>
 
-#ifdef HAVE_ZLIB
-#include <zlib.h>
-#endif
-
-#ifdef linux
-#ifdef strncpy
-  /* stupid Linux (redhat?) bug in macro */
-#undef strncpy
-#endif /* strncpy */
-#endif /* linux */
-
-#ifdef __APPLE__
-   #include "TargetConditionals.h"
-// It seems that in OS X the shortcuts for the in6_addr fields are different
-#define s6_addr16 __u6_addr.__u6_addr16
-#define s6_addr32 __u6_addr.__u6_addr32
-#endif
-
-/* #include "memwatch.h" */
-/* #include <mpatrol.h> */
 
 /* IPv6 support */
 #include "ipv6.h"
 
-
 #include "param.h"
-#include "skype.h"
-#include "msn.h"
-#include "ymsg.h"
-#include "jabber.h"
 #include "l7types.h"
 #include "struct.h"
-#include "naivebayes.h"
 /* include the histo management functions and declaration */
 #include "histo.h"
 
@@ -108,62 +64,19 @@
 #include "crypto.h"
 #include "../include/libtstat.h"
 
-#include "ipp2p_tstat.h"
-
-extern struct bayes_settings *bayes_settings_avgipg;
-extern struct bayes_settings *bayes_settings_pktsize;
-
 #define min(x,y) (((x)<(y))?(x):(y))
 #define max(x,y) (((x)>(y))?(x):(y))
 
-#if !(TARGET_OS_MAC || TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR)
-#define my_finite(x) finite(x)
-#else
-#define my_finite(x) isfinite(x)
-#endif
 
-
-/* several places in the code NEED numbers of a specific size. */
-/* since the definitions aren't standard across everything we're */
-/* trying to support, the types are gathered up here */
-/* specifically, we need:
-   tt_uint32	unsigned 32 bit 
-   tt_uint16	unsigned 16 bit 
-   tt_int32	signed 32 bit 
-   tt_int16	signed 16 bit
-*/
-/* first, do the 32 bit ones */
-#if SIZEOF_UNSIGNED_LONG_INT == 4
-typedef unsigned long tt_uint32;
-typedef long tt_int32;
-#else
-#if SIZEOF_UNSIGNED_INT == 4
-typedef unsigned int tt_uint32;
-typedef int tt_int32;
-#else
-//OOPS:Please insert an appropriate 32 - bit unsigned type here !
-//OOPS:Please insert an appropriate 32 - bit signed type here !
-#endif				/* SIZEOF_UNSIGNED_INT == 4 */
-#endif				/* SIZEOF_UNSIGNED_LONG_INT == 4 */
-/* first, do the 16 bit ones */
-#if SIZEOF_UNSIGNED_INT == 2
-typedef unsigned int tt_uint16;
-typedef int tt_int16;
-#else
-#if SIZEOF_UNSIGNED_SHORT == 2
-typedef unsigned short tt_uint16;
-typedef short tt_int16;
-#else
- 
-//OOPS:Please insert an appropriate 16 - bit unsigned type here !
-//OOPS:Please insert an appropriate 16 - bit signed type here !
-#endif				/* SIZEOF_UNSIGNED_INT == 4 */
-#endif				/* SIZEOF_UNSIGNED_LONG_INT == 4 */
-typedef unsigned char tt_uint8;
+/* fixed size integer types, used to access packet header fields */
+typedef uint32_t tt_uint32;
+typedef int32_t tt_int32;
+typedef uint16_t tt_uint16;
+typedef int16_t tt_int16;
+typedef uint8_t tt_uint8;
 
 #define FILENAME_SIZE 600
 /* declaration of global variables */
-extern char global_data_dir[FILENAME_SIZE];
 // extern char runtime_conf_fname[];
 extern int num_udp_pairs;	/* how many pairs are in use */
 extern udp_pair **utp;		/* array of pointers to allocated pairs */
@@ -172,9 +85,6 @@ extern udp_pair **utp;		/* array of pointers to allocated pairs */
 /* option flags */
 extern Bool internal_src;
 extern Bool internal_dst;
-
-extern Bool cloud_src;
-extern Bool cloud_dst;
 
 extern Bool crypto_src;
 extern Bool crypto_dst;
@@ -199,7 +109,6 @@ extern timeval last_packet;
 /* global routine decls */
 
 void *MallocZ (int);
-void *ReallocZ (void *oldptr, int obytes, int nbytes);
 void trace_init (void);
 void tcp_header_stat (struct tcphdr *ptcp, struct ip *pip, void *plast);
 int tcp_flow_stat (struct ip *, struct tcphdr *ptcp, void *plast,
@@ -210,7 +119,6 @@ char *elapsed2str (double etime);
 double Average (double sum, int count);
 double Stdev (double sum, double sum2, int n);
 char *ts2ascii (timeval *);
-char *ts2ascii_date (timeval *);
 char *ServiceName (portnum);
 char *HostName (ipaddr);
 char *HostAddr (ipaddr);
@@ -218,42 +126,14 @@ char * Timestamp (void);
 int rexmit (tcb * ptcb, seqnum seq, seglen len, Bool * pout_order,
 	    u_short this_ip_id);
 enum t_ack ack_in (tcb *, seqnum, unsigned tcp_data_length);
-struct mfile *Mfopen (char *fname, char *mode);
-void Minit (void);
-int Mfileno (MFILE * pmf);
-int Mvfprintf (MFILE * pmf, char *format, va_list ap);
-int Mfwrite (void *buf, u_long size, u_long nitems, MFILE * pmf);
-long Mftell (MFILE * pmf);
-int Mfseek (MFILE * pmf, long offset, int ptrname);
-int Mfprintf (MFILE * pmf, char *format, ...);
-int Mfflush (MFILE * pmf);
-int Mfclose (MFILE * pmf);
-int Mfpipe (int pipes[]);
 struct tcp_options *ParseOptions (struct tcphdr *ptcp, void *plast);
 
-extern Bool swap_stdin;
-extern FILE *second_file;
-FILE *CompOpenHeader (char *filename);
-FILE *CompOpenFile (char *filename);
-char *CompGetCommand (char *filename);
-
-void CompCloseFile (char *filename);
-void CompFormats (void);
-int CompIsCompressed (void);
-Bool FileIsStdin (char *filename);
-struct tcb *ptp2ptcb (tcp_pair * ptp, struct ip *pip, struct tcphdr *ptcp);
 void IP_COPYADDR (ipaddr * toaddr, ipaddr fromaddr);
 int IP_SAMEADDR (ipaddr addr1, ipaddr addr2);
-void PcapSavePacket (char *filename, struct ip *pip, void *plast);
 void StringToArgv (char *buf, int *pargc, char ***pargv);
 void CopyAddr (tcp_pair_addrblock *, struct ip *pip, portnum, portnum);
 int WhichDir (tcp_pair_addrblock *, tcp_pair_addrblock *);
 int SameConn (tcp_pair_addrblock *, tcp_pair_addrblock *, int *);
-Bool ip_cksum_valid (struct ip *pip, void *plast);
-Bool tcp_cksum_valid (struct ip *pip, struct tcphdr *ptcp, void *plast);
-Bool udp_cksum_valid (struct ip *pip, struct udphdr *pudp, void *plast);
-ipaddr *str2ipaddr (char *str);
-int IPcmp (ipaddr * pipA, ipaddr * pipB);
 
 /* UDP support routines */
 void udptrace_init (void);
@@ -408,101 +288,20 @@ struct tcp_options
 typedef int pread_f (struct timeval *, int *, int *, void **,
 		     int *, struct ip **, void **);
 
-/* give the prototypes for the is_GLORP() routines supported */
-
-/* give the prototypes for the is_GLORP() routines supported */
-#ifdef GROK_SNOOP
-pread_f *is_snoop (char *);
-#endif /* GROK_SNOOP */
-#ifdef GROK_NETM
-pread_f *is_netm (char *);
-#endif /* GROK_NETM */
-#ifdef GROK_TCPDUMP
+/* packet readers: pcap/pcapng files and live capture through libpcap */
 pread_f *is_tcpdump (char *);
-#endif /* GROK_TCPDUMP */
-#ifdef GROK_ETHERPEEK
-pread_f *is_EP (char *);
-#endif /* GROK_ETHERPEEK */
-#ifdef GROK_NS
-pread_f *is_ns (char *);
-#endif /* GROK_NS */
-#ifdef GROK_NLANR
-pread_f *is_nlanr (char *);
-#endif /* GROK_NLANR */
-#ifdef GROK_NETSCOUT
-pread_f *is_netscout (char *);
-#endif /* GROK_NETSCOUT */
-#ifdef GROK_ERF
-pread_f *is_erf (char *);
-#endif /* GROK_ERF */
-#ifdef GROK_DAG
-pread_f *is_dag (char *);
-int
-pread_dag (struct timeval *ptime,
-	   int *plen,
-	   int *ptlen,
-	   void **pphys, int *pphystype, struct ip **ppip, void **pplast);
-#endif /* GROK_DAG */
-#ifdef GROK_ERF_LIVE
 pread_f *init_live_tcpdump (char *);
 int
 pread_tcpdump (struct timeval *ptime,
 	       int *plen,
 	       int *ptlen,
 	       void **pphys, int *pphystype, struct ip **ppip, void **pplast);
-#endif /* GROK_LIVE_TCPDUMP */
-#ifdef GROK_LIVE_TCPDUMP
-pread_f *init_live_tcpdump (char *);
-int
-pread_tcpdump (struct timeval *ptime,
-	       int *plen,
-	       int *ptlen,
-	       void **pphys, int *pphystype, struct ip **ppip, void **pplast);
-#endif /* GROK_ERF_LIVE */
-#ifdef GROK_ERF_LIVE
-pread_f *init_erf_live (char *);
-int pread_erf_live (struct timeval *ptime, int *plen,
-		    int *ptlen, void **pphys, int *pphystype,
-		    struct ip **ppip, void **pplast);
-int pread_multi_erf_live (struct timeval *ptime, int *plen,
-			  int *ptlen, void **pphys, int *pphystype,
-			  struct ip **ppip, void **pplast);
-#endif /* GROK_ERF_LIVE */
 
-
-/*------------------* v1.2.0 *----------------------*/
-#ifdef GROK_DPMI
-pread_f *is_DPMI (char *);
-int pread_DPMI (struct timeval *ptime, int *plen,
-		int *ptlen, void **pphys, int *pphystype,
-		struct ip **ppip, void **pplast);
-#endif /* GROK_DPMI */
-
-int fExists (const char *fname);
-//void ArgsFromFile (const char *fname, int *_argc, char *_argv[]);
 char ** ArgsFromFile(char *fname, int *pargc);
-
-
-int dpmi_parse_config (const char *fname);
-
-/* I've had problems with the memcpy function that gcc stuffs into the program
-   and alignment problems.  This should fix it! 
-   v.1.2.0 added optimization by .:nonsns:. 
-   WARNING: it does not work on 64 bit architectures */
-
-void *MemCpy_TCPTRACE (void *p1, void *p2, size_t n);	/* in tstat.c */
-void *MemCpy_OPTIMIZED (void *p1, void *p2, size_t n);	/* in tcptrace.c */
-
-/* Removed the usage to MemCpy_OPTIMIZED, that might not be thread-safe and
-the glibc memcpy seems to be faster nowadays -MMM- */
-/*
-#define memcpy(p1,p2,n) MemCpy_OPTIMIZED(p1,p2,n);
-*/
 
 #ifndef EOL
 #define EOL          0xa
 #endif
-extern Bool internal_wired;
 extern Bool net_conf;
 /*------------------* v1.2.0 *----------------------*/
 
@@ -525,11 +324,7 @@ extern Bool net_conf;
  * Macros to simplify access to IPv4/IPv6 header fields
  */
 #define PIP_VERS(pip) (((struct ip *)(pip))->ip_v)
-#ifdef SUPPORT_IPV6
 #define PIP_ISV6(pip) (PIP_VERS(pip) == 6)
-#else
-#define PIP_ISV6(pip) FALSE
-#endif
 #define PIP_ISV4(pip) (PIP_VERS(pip) == 4)
 #define PIP_V6(pip) ((struct ipv6 *)(pip))
 #define PIP_V4(pip) ((struct ip *)(pip))
@@ -542,11 +337,7 @@ extern Bool net_conf;
  */
 #define ADDR_VERSION(paddr) ((paddr)->addr_vers)
 #define ADDR_ISV4(paddr) (ADDR_VERSION((paddr)) == 4)
-#ifdef SUPPORT_IPV6
 #define ADDR_ISV6(paddr) (ADDR_VERSION((paddr)) == 6)
-#else
-#define ADDR_ISV6(paddr) (FALSE)
-#endif
 struct ipaddr *IPV4ADDR2ADDR (struct in_addr *addr4);
 struct ipaddr *IPV6ADDR2ADDR (struct in6_addr *addr6);
 
@@ -557,7 +348,7 @@ struct ipaddr *IPV6ADDR2ADDR (struct in6_addr *addr6);
 #define IP_ECT(pip) (((struct ip *)(pip))->ip_tos & IPTOS_ECT)
 
 /*
- * fixes for various systems that aren't exactly like Solaris
+ * constants not always defined by the system headers
  */
 #ifndef IP_MAXPACKET
 #define IP_MAXPACKET 65535
@@ -659,8 +450,6 @@ struct ipaddr *IPV6ADDR2ADDR (struct in6_addr *addr6);
 
 /* LM stop */
 
-char *get_basename (char *filename);
-extern char curr_data_dir[FILENAME_SIZE+20];
 extern char runtime_conf_fname[];
 extern timeval last_time_step;
 extern timeval last_cleaned;
@@ -678,71 +467,17 @@ extern unsigned long tot_conn_UDP;
 void trace_done_periodic ();
 void freequad (quadrant ** ppquad);
 
-#define EXTERNAL_ADX_HISTO 0   /* Adx histogram for external networks, matched by adx_mask */
-#define INTERNAL_ADX_HISTO 1   /* Adx histogram for internal hosts, matched by ADX2_MASK */
-#define INTERNAL_ADX_MAX   2   /* Adx histogram for internal hosts, matched by ADX2_MASK */
-#define SRC_ADX 0
-#define DST_ADX 1
-
-void swap_adx (int idx);
 void make_conn_stats (tcp_pair * ptp_save, Bool flusso_nc);
 void make_udp_conn_stats (udp_pair * pup_save, Bool flusso_nc);
 void trace_done (void);
 void tcpdump_cleanup (FILE * wheref);
+char *url_encode (char *str);
 
-void behavioral_flow_wrap (struct ip *pip, void *pproto, int tproto, void *pdir,
-                    int dir, void *hdr, void *plast);
-
-#ifdef HAVE_ZLIB
 extern int wfprintf(FILE *stream, const char* format, ... );
-#else
-#define wfprintf fprintf
-#endif
-
-/* msn.c */
-#ifdef MSN_CLASSIFIER
-u_int32_t FindConTypeMsn (tcp_pair * ptp, struct ip *pip, struct tcphdr *ptcp,
-			  void *plast, int dir);
-void classify_msn_flow (tcp_pair * ptp, int dir);
-void print_msn_conn_stats (tcp_pair * ptp);
-void init_msn ();
-void msn_get_average ();
-#endif
-
-/* ymsg.c */
-#ifdef YMSG_CLASSIFIER
-u_int32_t FindConTypeYmsg (tcp_pair * ptp, struct ip *pip,
-			   struct tcphdr *ptcp, void *plast, int dir);
-void classify_ymsg_flow (tcp_pair * ptp, int dir);
-void print_ymsg_conn_stats (tcp_pair * ptp);
-void init_ymsg ();
-void ymsg_get_average ();
-#endif
-
-/* jabber.c */
-#ifdef XMPP_CLASSIFIER
-u_int32_t FindConTypeJabber (tcp_pair * ptp, struct ip *pip,
-			     struct tcphdr *ptcp, void *plast, int dir);
-void classify_jabber_flow (tcp_pair * ptp, int dir);
-void print_jabber_conn_stats (tcp_pair * ptp);
-void init_jabber ();
-void jabber_get_average ();
-#endif
 
 /* misc.c */
 
-void AVE_departure (timeval tc, win_stat * w);
-void AVE_arrival (timeval tc, win_stat * w);
-void AVE_new_step (timeval tc, win_stat *w, double val);
-double AVE_get_stat (timeval tc, win_stat * w);
-void AVE_init (win_stat * stat, char *name, timeval tc);
-
 int in_out_loc (int internal_src, int internal_dst, int dir);
-
-void id11to16(char *id16, char *id11);
-void id16to11(char *id11, char *id16);
-
-/* generic UDP */
 
 /* DNS Plugin */
 
@@ -752,15 +487,6 @@ void dns_process_response(struct ip *pip, void *pproto, int tproto, void *pdir,
                           int dir, void *hdr, void *plast);
 void dns_cache_status(void *thisdir, int tproto);
 
-/* Video Streaming Plugin */
-
-void videoL7_init ();
-void *getvideoL7 (struct udphdr *pudp, int tproto, void *pdir, void *plast);
-void videoL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
-	       int dir, void *hdr, void *plast);
-void make_videoL7_conn_stats (void * thisdir, int tproto);
-void make_videoL7_rate_stats (tcp_pair *thisflow, int len);
-
 /* HTTP Plugin */
 
 void http_init ();
@@ -768,22 +494,6 @@ void *gethttp (struct udphdr *pudp, int tproto, void *pdir, void *plast);
 void http_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 	       int dir, void *hdr, void *plast);
 void make_http_conn_stats (void * thisdir, int tproto);
-
-
-/* P2P plugin */
-void p2p_init ();
-void *getp2p (struct udphdr *pudp, int tproto, void *pdir, void *plast);
-
-void p2p_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
-                    int dir, void *hdr, void *plast);
-
-
-int p2p_tcp_match(struct ip *pip, void *pproto, int tproto, void *pdir,
-                    int dir, void *hdr, void *plast);
-int p2p_udp_match(struct ip *pip, void *pproto, int tproto, void *pdir,
-                    int dir, void *hdr, void *plast);
-void make_p2p_conn_stats (void * thisdir, int tproto);
-int TCP_p2p_to_L7type (tcp_pair *thisdir);
 
 /* tcpL7 */
 void tcpL7_init ();
@@ -793,18 +503,19 @@ void tcpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
 void make_tcpL7_conn_stats (void * thisdir, int tproto);
 void make_tcpL7_rate_stats (tcp_pair *thisflow, int len);
 void make_udpL7_rate_stats (ucb * thisflow, int len);
-void mse_protocol_check(tcp_pair *thisflow);
+
+/* udpL7 */
+void *getudpL7 (struct udphdr *pudp, int tproto, void *pdir, void *plast);
+void udpL7_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir,
+	       int dir, void *hdr, void *plast);
+void make_udpL7_conn_stats (void * thisflow, int tproto);
+int udp_to_L7type (ucb *thisflow);
 
 /* DNS log */
-#ifdef HAVE_LDNS
 void * check_dns(struct udphdr *pudp, int tproto, void *pdir, void *plast);
 void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir, int dir, void *hdr, void *plast);
-#endif // HAVE_LDNS
 
 /* web */
-enum http_content classify_http_get(void *pdata,int data_length);
-enum http_content classify_http_post(void *pdata,int data_length);
-enum web_category map_http_to_web(tcp_pair *);
 
 tstat_report * get_stats_report(tstat_report *report);
 
@@ -813,18 +524,7 @@ void log_parse_end_section(void);
 void log_parse_start_section(void);
 
 Bool internal_ip (struct in_addr adx);
-Bool cloud_ip (struct in_addr adx);
 Bool crypto_ip (struct in_addr adx);
-
-/* PROFILE VARIABLES */
-#include <sys/times.h>
-/* PROFILE VARIABLES */
-extern int prof_last_clk;            // last amount of clock usage
-extern double prof_last_tm;          // last overall running time
-extern struct tms prof_last_tms;     // last running time (user and sys)
-extern double prof_cps;              // clock per seconds give by sysconf()
-
-#define PROFILE_IDLE 1
 
 extern  long log_bitmask;
 #define LOG_IS_ENABLED(VAL)     (((log_bitmask & VAL) > 0))
@@ -832,38 +532,19 @@ extern  long log_bitmask;
 #define LOG_TCP_NOCOMPLETE      0x0002
 #define LOG_UDP_COMPLETE        0x0004
 #define LOG_MM_COMPLETE         0x0008
-#define LOG_SKYPE_COMPLETE      0x0010
-#define LOG_CHAT_COMPLETE       0x0020
-#define LOG_CHAT_MESSAGES       0x0040
-#define LOG_VIDEO_COMPLETE      0x0080
-#define LOG_STREAMING_COMPLETE  0x0100  // Obsolete
 // other logs disabled by default
 #define LOG_HTTP_COMPLETE       0x0200
-#define LOG_CHAT_MSNOTHER       0x1000  
-#define LOG_L3_BITRATE          0x2000  // -3 command line option (disabled by default)
-#ifdef HAVE_LDNS
 #define LOG_DNS_COMPLETE        0x0400
-#endif //HAVE_LDNS
 #define LOG_TCP_PERIODIC        0x0800
 #define LOG_UDP_PERIODIC        0x1000
-// overall mask
-#define LOG_ALL                 (((1<<9)-1))
+// logs enabled by default
+#define LOG_ALL                 (LOG_TCP_COMPLETE|LOG_TCP_NOCOMPLETE|LOG_UDP_COMPLETE|LOG_MM_COMPLETE)
 
 #define TCP_LOG_CORE		0x0000
 #define TCP_LOG_END_TO_END	0x0001
 #define TCP_LOG_LAYER7		0x0002
-#define TCP_LOG_P2P		0x0004
 #define TCP_LOG_OPTIONS		0x0008
 #define TCP_LOG_ADVANCED	0x0010
-#define TCP_LOG_ALL		(TCP_LOG_END_TO_END|TCP_LOG_LAYER7|TCP_LOG_P2P|TCP_LOG_OPTIONS)
-
-#define VIDEO_LOG_CORE		0x0000
-#define VIDEO_LOG_END_TO_END	0x0001
-#define VIDEO_LOG_LAYER7	0x0002
-#define VIDEO_LOG_OPTIONS	0x0004
-#define VIDEO_LOG_VIDEOINFO	0x0008
-#define VIDEO_LOG_YOUTUBE	0x0010
-#define VIDEO_LOG_ADVANCED	0x0020
-#define VIDEO_LOG_ALL		(VIDEO_LOG_CORE|VIDEO_LOG_END_TO_END|VIDEO_LOG_LAYER7|VIDEO_LOG_OPTIONS|VIDEO_LOG_VIDEOINFO|VIDEO_LOG_YOUTUBE)
+#define TCP_LOG_ALL		(TCP_LOG_END_TO_END|TCP_LOG_LAYER7|TCP_LOG_OPTIONS)
 
 extern struct global_parameters GLOBALS;

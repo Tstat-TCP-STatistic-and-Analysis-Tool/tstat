@@ -35,27 +35,8 @@
 #define TLS13_SERVER_HELLO_RETRY_REQUEST_MAGIC "\xCF\x21\xAD\x74\xE5\x9A\x61\x11\xBE\x1D\x8C\x02\x1E\x65\xB8\x91\xC2\xA2\x11\x16\x7A\xBB\x8C\x5E\x07\x9E\x09\xE2\xC8\xA8\x33\x9C"
 
 /* Maximum number of UDP packets to analyze per flow (c2s+s2c) */
-/* trying to identify obfuscate KAD traffic                    */
-#define MAX_UDP_OBFUSCATE 10
-
-/* Maximum number of UDP packets to analyze per flow (c2s+s2c) */
-/* trying to identify uTP Bittorrent traffic                   */
-#define MAX_UDP_UTP 40
-
-/* Maximum number of UDP packets to analyze per flow (c2s+s2c) */
 /* trying to identify QUIC           traffic                   */
 #define MAX_UDP_QUIC 60
-
-/* Maximum number of UDP packets to analyze per flow (c2s+s2c) */
-/* trying to identify MPEG2 over UDP traffic (VOD)             */
-#define MAX_UDP_VOD 40
-
-/* Maximum number of UDP packets to analyze per flow (c2s+s2c) */
-/* trying to identify SYE (Amazon Prime Live) traffic          */
-#define MAX_UDP_SYE 40
-
-/* Definition of the RTP magic number */
-#define RTP_MAGICNUMBER 0x24
 
 
 /* Keyword definitions for fast compare */
@@ -69,19 +50,11 @@
 #define HEAD 0x48454144UL
 #define HTTP 0x48545450UL
 #define RTSP 0x52545350UL
-#define ICY  0x49435920UL
 #define DESC 0x44455343UL
 #define PUT     0x50555420UL
 #define PATCH   0x50415443UL
 #define DELETE  0x44454C45UL
 #define OPTIONS 0x4F505449UL
-
-/*Flash header*/
-#define FLV  0x464C5601UL
-#define FLV2 0x1200034BUL
-
-/* MP4 header */
-#define MP4  0x00000018UL
 
 /* SMTP commands */
 #define SMTP_220  0x32323020UL
@@ -103,9 +76,6 @@
 /* SSH header */
 #define SSH_HEADER 0x5353482DUL
 
-/* Facebook Zero header */
-#define FB0_HEADER 0x31515456UL  /* the string 1QTV */
-
 
 #else
 
@@ -115,19 +85,11 @@
 #define HEAD 0x44414548UL
 #define HTTP 0x50545448UL
 #define RTSP 0x50535452UL
-#define ICY  0x20594349UL
 #define DESC 0x43534544UL
 #define PUT     0x20545550UL
 #define PATCH   0x43544150UL
 #define DELETE  0x454C4544UL
 #define OPTIONS 0x4954504FUL
-
-/*Flash header*/
-#define FLV  0x01564C46UL
-#define FLV2 0x4B030012UL
-
-/* MP4 header */
-#define MP4  0x18000000UL
 
 /* SMTP commands */
 #define SMTP_220  0x20303232UL
@@ -148,9 +110,6 @@
 
 /* SSH header */
 #define SSH_HEADER 0x2D485353UL
-
-/* Facebook Zero header */
-#define FB0_HEADER 0x56545131UL  /* the string 1QTV */
 
 #endif
 

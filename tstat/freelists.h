@@ -30,11 +30,9 @@ void tplist_release (struct tp_list_elem *rel_tplist);
 
 segment *segment_alloc (void);
 void segment_release (segment *);
-void segment_list_info (void);
 
 quadrant *quadrant_alloc (void);
 void quadrant_release (quadrant *);
-void quadrant_list_info (void);
 
 tcp_pair *tp_alloc (void);
 void tp_release (tcp_pair * relesased_tcp_pair);

@@ -16,7 +16,6 @@
  *
 */
 
-#ifdef HAVE_RRDTOOL
 #include <rrd.h>
 /*-----------------------------------------------------------*/
 /* RRDtools 				                     
@@ -92,7 +91,7 @@ void rrdtool_update_all();
 void rrdtool_set_conf (char *file);
 void rrdtool_set_path (char *path);
 void rrdtool_init ();
+void rrdtool_close ();
 /*-----------------------------------------------------------*/
 
 
-#endif

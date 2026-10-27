@@ -17,11 +17,9 @@
 */
 
 
-#include <stdio.h>
 #include <fcntl.h>
 #include "tstat.h"
 
-#ifdef GROK_TCPDUMP
 
 #include "tcpdump.h"
 #include <pcap.h>
@@ -93,17 +91,9 @@ find_ip_eth (unsigned char *buf)
   unsigned short eth_proto_type;	/* the protocol type field of the Ethernet header */
   unsigned short vlan_proto_type;	/* the protocol type field of the VLAN header */
   int offset = -1;		/* the calculated offset that this function will return */
-#ifndef USE_MEMCPY
-  uint16_t *ptype;              /* pointer at the location of the field in the buffer */ 
-#endif
 
-#ifdef USE_MEMCPY
   memcpy (&eth_proto_type, buf + 12, 2);
   eth_proto_type = ntohs (eth_proto_type);
-#else
-  ptype = (uint16_t *)(buf+12);
-  eth_proto_type = ntohs (*ptype);
-#endif
 
   switch (eth_proto_type)
     {
@@ -114,25 +104,15 @@ find_ip_eth (unsigned char *buf)
       offset = 14;
       break;
     case ETHERTYPE_PPPOE_SESSION:	/* it's a PPPoE session */
-#ifdef USE_MEMCPY
       memcpy (&ppp_proto_type, buf + 20, 2);
       ppp_proto_type = ntohs (ppp_proto_type);
-#else
-      ptype = (uint16_t *)(buf+20);
-      ppp_proto_type = ntohs (*ptype);
-#endif
       if (ppp_proto_type == 0x0021)	/* it's IP over PPPoE */
 	offset = PPPOE_SIZE;
       break;
     case ETHERTYPE_8021Q:
       offset = 18;
-#ifdef USE_MEMCPY
       memcpy (&vlan_proto_type, buf + 16, 2);
       vlan_proto_type = ntohs (vlan_proto_type);
-#else
-      ptype = (uint16_t *)(buf+16);
-      vlan_proto_type = ntohs (*ptype);
-#endif
       if (vlan_proto_type == ETHERTYPE_MPLS)	/* it's MPLS over VLAN */
         {
 	  offset += 4; /* Skip 4 bytes of MPLS label*/
@@ -150,7 +130,6 @@ find_ip_eth (unsigned char *buf)
 }
 
 
-
 /* This function determine the offset for the IP packet in a PPP or HDLC PPP frame */
 /* Written by Yann Samama (ysamama@nortelnetworks.com) on june 19th, 2003 */
 static int
@@ -159,25 +138,13 @@ find_ip_ppp (unsigned char *buf)
   unsigned char ppp_byte0;	/* the first byte of the PPP frame */
   unsigned short ppp_proto_type;	/* the protocol type field of the PPP header */
   int offset = -1;		/* the calculated offset that this function will return */
-#ifndef USE_MEMCPY
-  uint16_t *ptype;              /* pointer at the location of the field in the buffer */ 
-#endif
 
-#ifdef USE_MEMCPY
   memcpy (&ppp_byte0, buf, 1);
-#else
-  ppp_byte0 = buf[0];
-#endif
   switch (ppp_byte0)
     {
     case 0xff:			/* It is HDLC PPP encapsulation (2 bytes for HDLC and 2 bytes for PPP) */
-#ifdef USE_MEMCPY
       memcpy (&ppp_proto_type, buf + 2, 2);
       ppp_proto_type = ntohs (ppp_proto_type);
-#else
-      ptype = (uint16_t *)(buf+2);
-      ppp_proto_type = ntohs (*ptype);
-#endif
       if (ppp_proto_type == 0x21)	/* That means HDLC PPP is encapsulating IP */
 	offset = 4;
       else			/* That means PPP is *NOT* encapsulating IP */
@@ -193,13 +160,8 @@ find_ip_ppp (unsigned char *buf)
       break;
 
     case 0x00:			/* It is raw PPP encapsulation */
-#ifdef USE_MEMCPY
       memcpy (&ppp_proto_type, buf, 2);
       ppp_proto_type = ntohs (ppp_proto_type);
-#else
-      ptype = (uint16_t *)(buf);
-      ppp_proto_type = ntohs (*ptype);
-#endif
       if (ppp_proto_type == 0x21)	/* It is raw PPP encapsulation of IP with uncompressed (2 bytes) protocol field */
 	offset = 2;
       else			/* That means PPP is *NOT* encapsulating IP */
@@ -220,9 +182,6 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
     int type;
     int iplen;
     static int offset = -1;
-#ifndef USE_MEMCPY
-    struct ether_header *ptr_eth_header;
-#endif
 
     iplen = phdr->caplen;
     if (iplen > IP_MAXPACKET)
@@ -246,14 +205,7 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
         case PCAP_DLT_EN10MB:
             offset = find_ip_eth (buf);	/* Here we check if we are dealing with Straight Ethernet encapsulation or PPPoE */
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy (&eth_header, buf, EH_SIZE);	/* save ether header */
-#else
-	    ptr_eth_header = (struct ether_header *)buf;
-	    eth_header.ether_dhost = ptr_eth_header->ether_dhost; /* save ether destination MAC */
-	    eth_header.ether_shost = ptr_eth_header->ether_shost; /* save ether souce MAC */
-	    eth_header.ether_type = ptr_eth_header->ether_type; /* save ether type */
-#endif
             /* check if this frame is coming in */
             internal_shost = internal_dhost = FALSE;
             if(internal_eth (eth_header.ether_shost, &mac_filter))
@@ -267,33 +219,21 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
                 case -1:		/* Not an IP packet */
                     return (-1);
                 case EH_SIZE:		/* straight Ethernet encapsulation */
-#ifdef USE_MEMCPY
                     memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-		    ip_buf = (char *)(buf + offset);
-#endif
                     callback_plast = ip_buf + iplen - 1;
                     break;
                 case PPPOE_SIZE:	/* PPPoE encapsulation */
                 //case MPLS8021Q_SIZE:		/* VLAN-MPLS encapsulation - same len*/
                     /* we use a fake ether type here */
                     eth_header.ether_type = htons (ETHERTYPE_IP);
-#ifdef USE_MEMCPY
                     memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-		    ip_buf = (char *)(buf + offset);
-#endif
                     callback_plast = ip_buf + iplen - 1;
                     break;
                 case IEEE8021Q_SIZE:	/* VLAN encapsulation */
                 //case MPLS_SIZE:			/* MPLS encapsulation - same len*/
                     /* we use a fake ether type here */
                     eth_header.ether_type = htons (ETHERTYPE_IP);
-#ifdef USE_MEMCPY
                     memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-		    ip_buf = (char *)(buf + offset);
-#endif
                     callback_plast = ip_buf + iplen - 1;
                     break;
                 default:		/* should not be used, but we never know ... */
@@ -303,26 +243,13 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
         case PCAP_DLT_IEEE802:
             /* just pretend it's "normal" ethernet */
             offset = 14;		/* 22 bytes of IEEE cruft */
-#ifdef USE_MEMCPY
             memcpy (&eth_header, buf, EH_SIZE);	/* save ether header */
-#else
-	    ptr_eth_header = (struct ether_header *)buf;
-	    eth_header.ether_type = ptr_eth_header->ether_type; /* save ether type */
-#endif
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy (ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = (char *) ip_buf + iplen - 1;
             break;
         case PCAP_DLT_SLIP:
-#ifdef USE_MEMCPY
             memcpy (ip_buf, buf + 16, iplen);
-#else
-            ip_buf = (char *)(buf + 16);
-#endif
             iplen -= 16;
             callback_plast = (char *) ip_buf + iplen - 1;
             break;
@@ -332,11 +259,7 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
             if (offset < 0)		/* Not an IP packet */
                 return (-1);
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_FDDI:
@@ -345,22 +268,14 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
             if (offset < 0)
                 return (-1);
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_NULL:
             /* no phys header attached */
             offset = 4;
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             /* we use a fake ether type here */
             eth_header.ether_type = htons (ETHERTYPE_IP);
@@ -368,33 +283,21 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
         case PCAP_DLT_ATM_RFC1483:
             /* ATM RFC1483 - LLC/SNAP ecapsulated atm */
             iplen -= 8;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + 8, iplen);
-#else
-	    ip_buf = (char *)(buf + 8);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_RAW:
             /* raw IP */
             offset = 0;
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_LINUX_SLL:
             /* linux cooked socket */
             offset = 16;
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
             // Patch sent by Brandon Eisenamann to passby 802.11, LLC/SNAP
@@ -402,44 +305,26 @@ callback (char *user, struct pcap_pkthdr *phdr, unsigned char *buf)
         case PCAP_DLT_IEEE802_11:
             offset = 24 + 8;		// 802.11 header + LLC/SNAP header
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_IEEE802_11_RADIO:
             offset = 64 + 24;		//WLAN header + 802.11 header
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy (&eth_header, buf, EH_SIZE);	// save ethernet header
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ptr_eth_header = (struct ether_header *)buf;
-	    eth_header.ether_type = ptr_eth_header->ether_type; /* save ether type */
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_PRISM2:
             offset = 144 + 24 + 8;	// PRISM2+IEEE 802.11+ LLC/SNAP headers
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = ip_buf + iplen - 1;
             break;
         case PCAP_DLT_C_HDLC:
             offset = 4;
             iplen -= offset;
-#ifdef USE_MEMCPY
             memcpy ((char *) ip_buf, buf + offset, iplen);
-#else
-	    ip_buf = (char *)(buf + offset);
-#endif
             callback_plast = (char *) ip_buf + iplen - 1;
             break;
         default:
@@ -534,13 +419,8 @@ is_tcpdump (char *filename)
   char *physname = "<unknown>";
   int type;
 
-#ifdef __WIN32
-  if ((pcap = pcap_open_offline (filename, errbuf)) == NULL)
-    {
-#else
   if ((pcap = pcap_open_offline ("-", errbuf)) == NULL)
     {
-#endif /* __WIN32 */
       if (debug > 2)
 	fprintf (fp_stderr, "PCAP said: '%s'\n", errbuf);
       rewind (stdin);
@@ -722,63 +602,6 @@ init_live_tcpdump (char *filename)
 
 /* support for writing a new pcap file */
 
-void
-PcapSavePacket (char *filename, struct ip *pip, void *plast)
-{
-  static MFILE *f_savefile = NULL;
-  struct pcap_pkthdr phdr;
-  int wlen;
-
-  if (f_savefile == NULL)
-    {
-      struct pcap_file_header fhdr;
-
-      /* try to open the file */
-      if ((f_savefile = Mfopen (filename, "w")) == NULL)
-	{
-	  fprintf (fp_stderr, "%s: %s\n", filename, strerror(errno));
-	  exit (-1);
-	}
-
-      /* make up the header info it wants */
-      /* this comes from version 2.4, no pcap routine handy :-(  */
-      fhdr.magic = TCPDUMP_MAGIC;
-      fhdr.version_major = PCAP_VERSION_MAJOR;
-      fhdr.version_minor = PCAP_VERSION_MINOR;
-
-      fhdr.thiszone = 0;	/* don't have this info, just make it up */
-      fhdr.snaplen = 1000000;	/* don't have this info, just make it up */
-      fhdr.linktype = PCAP_DLT_EN10MB;	/* always Ethernet (10Mb) */
-      fhdr.sigfigs = 0;
-
-      /* write the header */
-      Mfwrite ((char *) &fhdr, sizeof (fhdr), 1, f_savefile);
-
-      if (debug)
-	fprintf (fp_stderr, "Created pcap save file '%s'\n", filename);
-    }
-
-  /* create the packet header */
-  /* (copying time structure in 2 steps to avoid RedHat brain damage) */
-  phdr.ts.tv_sec = current_time.tv_sec;
-  phdr.ts.tv_usec = current_time.tv_usec;
-  phdr.caplen = (char *) plast - (char *) pip + 1;
-  phdr.caplen += EH_SIZE;	/* add in the ether header */
-  phdr.len = EH_SIZE + ntohs (PIP_LEN (pip));	/* probably this */
-
-  /* write the packet header */
-  Mfwrite (&phdr, sizeof (phdr), 1, f_savefile);
-
-  /* write a (bogus) ethernet header */
-  memset (&eth_header, 0, EH_SIZE);
-  eth_header.ether_type = htons (ETHERTYPE_IP);
-  Mfwrite (&eth_header, sizeof (eth_header), 1, f_savefile);
-
-  /* write the IP/TCP parts */
-  wlen = phdr.caplen - EH_SIZE;	/* remove the ether header */
-  Mfwrite (pip, wlen, 1, f_savefile);
-}
-
 
 /* courtesely from tcpdump source... */
 /* make a clean exit on interrupts */
@@ -841,15 +664,3 @@ read_infile (char *fname)
   return (cp);
 }
 
-#else /* GROK_TCPDUMP */
-
-void
-PcapSavePacket (char *filename, struct ip *pip, void *plast)
-{
-  fprintf (fp_stderr, "\
-Sorry, packet writing only supported with the pcap library\n\
-compiled into the program (See GROK_TCPDUMP)\n");
-  exit (-2);
-}
-
-#endif /* GROK_TCPDUMP */

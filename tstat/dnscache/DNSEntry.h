@@ -52,8 +52,6 @@ public:
 			timeval response_time);
 	DNSEntry();
 	virtual ~DNSEntry();
-	unsigned char* getHostname();
-	struct in_addr* getDNSServer();
 	struct DNS_data* getDNSData();
 };
 

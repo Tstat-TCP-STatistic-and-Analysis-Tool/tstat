@@ -17,12 +17,16 @@
 */
 
 
-/* the string to print */
-#ifdef VERSION
-    #undef VERSION
-#endif
-#define VERSION  "TNG tstat-" PACKAGE_VERSION " (" VERSION_FLAVOR " flavor) -- " VERSION_DATE
+/* version information */
+#define VERSION_MAJOR  3
+#define VERSION_MINOR  3
+#define VERSION_BUGFIX 0
+#define VERSION_DATE   "Mon Nov 15 14:53:42 CET 2021"
+#define VERSION_FLAVOR "Voynich"
+#define PACKAGE_VERSION "3.3.0"
 
+/* the string to print */
+#define VERSION  "TNG tstat-" PACKAGE_VERSION " (" VERSION_FLAVOR " flavor) -- " VERSION_DATE
 
 /* build information */
 /* constants filled in when version.c is compiled */

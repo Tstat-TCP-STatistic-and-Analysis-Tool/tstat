@@ -1,3 +1,49 @@
+24/10/26
+- Code cleanup
+  * Removed the support for DAG cards, DPMI, ERF and the other legacy trace formats:
+    only pcap/pcapng files and libpcap live capture are supported
+  * Removed P2P, Skype, video streaming (log_video_complete), MSN/Yahoo/Jabber chat
+    (log_chat_*), ICY, Facebook Zero, MSE/PE and obfuscated eMule classification
+  * Removed the UDP classification of uTP, VOD, SYE, Teredo, SIP and P2P protocols.
+    DNS, DTLS and MTURN DPI moved to udpL7.c; log_udp_complete is written by udpL7.c
+  * Removed the p2p_t column from log_tcp_complete/log_tcp_nocomplete and the
+    tcplog_p2p set of measures
+  * Removed the classification of HTTP content (web.c, http_t column of
+    log_tcp_complete/log_tcp_nocomplete, L7_HTTP_* and L7_WEB_* histograms and
+    the related RRDs): HTTP is still identified in con_t and log_http_complete
+  * Removed the classification of TLS services based on SNI/CN regular
+    expressions (tls_services.c, L7_TLS_* and tls_bitrate_* histograms and RRDs)
+  * Removed the cloud/non-cloud classification of the traffic (-C option,
+    max_cloud_hosts global parameter, *_c_* and *_nc_* histograms and RRDs)
+  * Histograms are only exported to RRD: removed the text histogram files
+    (-H, -S, histo_engine), the global histograms (-g) and the address hit
+    counters (ADX, addresses.c, max_adx_slots). -H, -S and -g are ignored
+    with a warning
+  * Fixed: 'hit' in rrd.conf made tstat exit since the RRD file was not created
+  * Fixed: RTCP flows were counted twice in L7_UDP_num_out
+  * Fixed RRD_THREADED: pending RRD updates are written before exiting
+    (rrdtool_close(), also called by tstat_close()), and the writer thread uses
+    rrd_update_r() instead of sharing rrd.argv/getopt with the main thread
+  * Input traces must be uncompressed pcap/pcapng files (or stdin): removed
+    compress.c and mfiles.c
+  * Removed the profile_* histograms (CPU usage, active/missed flows, TCP data)
+  * Fixed: the QUIC SNI was extracted only for QUIC v1. The Initial salt is now
+    chosen by version, supporting draft-23..32 (e.g., TikTok's 0xff00001d) and
+    Meta's mvfst (0xfaceb002, 0xfaceb00e)
+  * Fixed: the max_crypto_cache_size global constant defaulted to 0 instead of
+    MAX_CRYPTO_CACHE_SIZE, so the cache of the anonymized addresses was never used
+  * Fixed: the tcp_net_dup_loc histogram was registered as tcp_net_dup_out
+  * QUIC detection moved from the BEHAVIORAL plugin (udp.c) to the UDPL7 plugin
+    (udpL7.c)
+  * Removed log_l3_bitrate, LOG_OOO, LOG_UNKNOWN, LOG_HALFDUPLEX, MEMDEBUG,
+    SUPPORT_MIXED_DNS, LOST_PACKET_STAT and the Android/Windows/BSD/Solaris support
+  * log_periodic, log_dns_complete (ldns), DN-Hunter, IPv6, QUIC details (openssl)
+    and RRDtool are always compiled in
+  * Removed the generation of gzip compressed logs (-Z) and dumps (-P)
+  * Replaced autotools with a plain Makefile (Ubuntu/Linux only); PACKET_STATS and
+    RRD_THREADED are optional build flags (make PACKET_STATS=1 RRD_THREADED=1)
+  * Obsolete parameters in the runtime (-T) and global (-G) configuration files are
+    ignored with a warning
 14/06/24 - MMM
 - Main changes in 3.3
   * Added QUIC classification

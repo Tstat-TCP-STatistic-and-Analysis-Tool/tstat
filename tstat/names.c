@@ -25,7 +25,6 @@
  */
 
 #include "tstat.h"
-#include <stdarg.h>
 
 
 /* local routines */
@@ -48,7 +47,6 @@ HostAddr (ipaddr ipaddress)
 {
   char *adr;
 
-#ifdef SUPPORT_IPV6
   if (ADDR_ISV6 (&ipaddress))
     {
       static char adrv6[INET6_ADDRSTRLEN];
@@ -59,7 +57,6 @@ HostAddr (ipaddr ipaddress)
       adr = adrv6;
     }
   else
-#endif
     adr = inet_ntoa (ipaddress.un.ip4);
 
   return (adr);

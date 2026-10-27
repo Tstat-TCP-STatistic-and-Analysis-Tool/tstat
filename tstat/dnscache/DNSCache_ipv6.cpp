@@ -89,27 +89,3 @@ struct DNS_data_IPv6* getEntry_ipv6(struct my_in6_addr client_ip, struct my_in6_
 	}
 	return NULL;
 }
-
-
-unsigned char* get_ipv6(struct my_in6_addr client_ip, struct my_in6_addr server_ip){
-	if(ipv6_hashtable.count(client_ip)>0){
-		std::map<struct my_in6_addr, DNSEntryIPv6*> &server_map = ipv6_hashtable[client_ip];
-		if(server_map.count(server_ip)>0){
-			DNSEntryIPv6 entry = *server_map[server_ip];
-			return entry.getHostname();
-		}
-	}
-	return NULL;
-}
-
-struct in6_addr* get_dns_server_ipv6(struct my_in6_addr client_ip, struct my_in6_addr server_ip){
-	if(ipv6_hashtable.count(client_ip)>0){
-			std::map<struct my_in6_addr, DNSEntryIPv6*> &server_map = ipv6_hashtable[client_ip];
-			if(server_map.count(server_ip)>0){
-				DNSEntryIPv6 entry = *server_map[server_ip];
-				return entry.getDNSServer();
-			}
-		}
-	return NULL;
-}
-

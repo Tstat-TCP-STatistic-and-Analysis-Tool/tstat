@@ -28,27 +28,19 @@
     ( type == PROTOCOL_TCP ? "TCP" : type == PROTOCOL_UDP ? "UDP" : "TCP/UDP" )
 
 
-/* Upper Level protocols (bitmask)*/
+/* Upper Level protocols (bitmask), reported in the con_t column of
+   log_tcp_complete. The values of removed protocols are not reused */
 #define UNKNOWN_PROTOCOL  0
 #define HTTP_PROTOCOL     1
 #define RTSP_PROTOCOL     2
 #define RTP_PROTOCOL      4
-#define ICY_PROTOCOL      8
 #define RTCP_PROTOCOL    16
-#define MSN_PROTOCOL     32
-#define YMSG_PROTOCOL    64
-#define XMPP_PROTOCOL   128
-#define P2P_PROTOCOL    256
-#define SKYPE_PROTOCOL  512
 #define SMTP_PROTOCOL  1024
 #define POP3_PROTOCOL  2048
 #define IMAP_PROTOCOL  4096
 #define SSL_PROTOCOL   8192
-#define OBF_PROTOCOL  16384
 #define SSH_PROTOCOL  32768
 #define RTMP_PROTOCOL 65536
-#define MSE_PROTOCOL 131072
-#define FB0_PROTOCOL 262144
 
 /* IP address classes */
 #define UNICAST       0

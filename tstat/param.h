@@ -19,17 +19,11 @@
 /* Here you find the parameters which can be modified to tune Tstat
    performance and/or histogram creation periods */
 
-/* Param dealing with the address hit counters */
-#define MAX_ADX_SLOTS 70001	/* hash size for the ip addresses hit counter */
-#define ADDR_MASK 0x00ffffff	/* mask to count IP addresses - inet order */
-#define ADDR2_MASK 0x00ffffff	/* mask to count internal IP addresses bitrate - inet order */
-
 /* Max number of ethernet MACs to check if the frame is incoming or outgoing */
 #define MAX_INTERNAL_ETHERS  20
 
 /* Max number of nets to check if ip is internal or external */
 #define MAX_INTERNAL_HOSTS  100
-#define MAX_CLOUD_HOSTS  100
 #define MAX_CRYPTO_HOSTS  40
 #define MAX_WHITE_HOSTS  100
 
@@ -135,9 +129,7 @@ Increase this number on high speed network will help ...*/
 #define DIRS 12
 //#define DIRS 1
 
-#ifndef MAXFLOAT
-#define MAXFLOAT 3.40282347e+38F
-#endif
+
 
 /* Euristic to detect dup TCP/UDP packets. */
 /* May be useful when the original trace has some NETWORK dups*/
@@ -155,9 +147,8 @@ Increase this number on high speed network will help ...*/
 /* Until Tstat 2.1 the fixed snaplen size for pcap live captures was */
 /* hardcoded in tcpdump.h.                                           */
 /* Now it can be selected from the command line (-E) and the default */
-/* value is hardcoded here. Make large enough to keep all options.   */
-/* Advanced features, like YouTube and BitTorrent characterization,  */
-/* require a large snaplen, e.g. 550 bytes */
+/* value is hardcoded here. Make large enough to keep all options    */
+/* and the TLS/HTTP headers, e.g. 550 bytes                          */
 #define DEFAULT_SNAPLEN 550
 
 /* RTP parameters */
@@ -166,18 +157,9 @@ Increase this number on high speed network will help ...*/
 #define OVERFLOW_TH 2000	/* threshold to consider rtp segment as out
 				   of sequence */
 
-/* Entropy threshold to detect encrypted flows */
-#define ENTROPY_SAMPLE    60    /* Number of bytes in each packet payload 
-                                   used to compute the nibble entropy */
-#define ENTROPY_THRESHOLD 3.7   /* Empirically tested that nibble entropy 
-                                   over about 100 random samples is larger
-				   than 3.7 with 99% probability */
+/* largest float value, used to initialize minimum values */
+#define MAXFLOAT 3.40282347e+38F
 
-/* Secondary address histogram sample rate */
-#define ADX2_BITRATE_DELTA 60   /* 60 sec */
-#define ADX2_MAX_DELTA      1   /*  1 sec */
-
-#define RATE_SAMPLING 1000000   /* 1 sec */
 
 #define LOG_PERIODIC_INTERVAL 1000000 /* Log_Periodic sampling rate (both TCP and UDP)  1 sec */
 
@@ -185,20 +167,12 @@ Increase this number on high speed network will help ...*/
                                          LRU cache for a few hours */
 /* Size of the DNS cache */
 #define DNS_CACHE_SIZE 100000   /* 500,000 used on large probes */
-#ifdef SUPPORT_IPV6
 #define DNS_CACHE_SIZE_IPV6 1000   /* possibly a small cache  */
-#ifdef SUPPORT_MIXED_DNS
-#define DNS_CACHE_SIZE_IPV4_DNS6  1000   /* possibly a small cache  */
-#define DNS_CACHE_SIZE_IPV6_DNS4 10000   /* possibly a small cache  */
-#endif
-#endif
 
 /* Masks for the encryption of IPv6 addresses */
-#ifdef SUPPORT_IPV6
 /* Default masks: the last dword is not masked */
 #define CRYPTO_IPV6_MASK_0	0xffffffffL
 #define CRYPTO_IPV6_MASK_1	0xf0f0f0f0L
 #define CRYPTO_IPV6_MASK_2	0x0f0f0f0fL
 #define CRYPTO_IPV6_MASK_3	0x00000000L
-#endif
 

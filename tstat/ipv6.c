@@ -17,7 +17,6 @@
 */
 
 #include "tstat.h"
-extern Bool coming_in;
 extern Bool net6_conf;
 extern Bool internal_shost;
 extern Bool internal_dhost;
@@ -25,103 +24,17 @@ extern eth_filter mac_filter;
 
 extern struct L3_bitrates L3_bitrate;
 
-#ifdef SUPPORT_IPV6
 extern struct in6_addr *internal_net_listv6;
 extern int *internal_net_maskv6;
 extern int tot_internal_netsv6;
 extern struct in6_addr *crypto_net_listv6;
 extern int *crypto_net_maskv6;
 extern int tot_crypto_netsv6;
-extern struct in6_addr *cloud_net_listv6;
-extern int *cloud_net_maskv6;
-extern int tot_cloud_netsv6;
 extern struct in6_addr *white_net_listv6;
 extern int *white_net_maskv6;
 extern int tot_white_netsv6;
-#endif
-
-/* the names of IPv6 extensions that we understand */
-char *
-ipv6_header_name (u_char nextheader)
-{
-  switch (nextheader)
-    {
-    case IPPROTO_DSTOPTS:
-      return ("Destinations options");
-    case IPPROTO_FRAGMENT:
-      return ("Fragment header");
-    case IPPROTO_HOPOPTS:
-      return ("Hop by hop");
-    case IPPROTO_NONE:
-      return ("No next header");
-    case IPPROTO_ROUTING:
-      return ("Routing header");
-    case IPPROTO_ICMPV6:
-      return ("IPv6 ICMP");
-    case IPPROTO_TCP:
-      return ("TCP");
-    case IPPROTO_UDP:
-      return ("UDP");
-    case IPPROTO_AH:
-      return ("IPSec AH header");
-    case IPPROTO_ESP:
-      return ("IPSec ESP");
-    case IPPROTO_MH:
-      return ("Mobility IPv6");
-    default:
-      return ("<unknown>");
-    }
-}
 
 
-/* given a next header type and a pointer to the header, return a pointer
-   to the next extension header and type */
-struct ipv6_ext *
-ipv6_nextheader (void *pheader0, u_char * pnextheader)
-{
-#ifdef SUPPORT_IPV6
-  struct ipv6_ext *pheader = pheader0;
-
-  switch (*pnextheader)
-    {
-      /* nothing follows these... */
-    case IPPROTO_TCP:
-    case IPPROTO_NONE:
-    case IPPROTO_ICMPV6:
-    case IPPROTO_UDP:
-    case IPPROTO_ESP:
-      return (NULL);
-
-      /* somebody follows these */
-    case IPPROTO_HOPOPTS:
-    case IPPROTO_ROUTING:
-    case IPPROTO_DSTOPTS:
-    case IPPROTO_MH:
-      *pnextheader = pheader->ip6ext_nheader;
-      return ((struct ipv6_ext *) ((char *) pheader + 8 + (pheader->ip6ext_len)*8));
-
-    case IPPROTO_AH:
-      /* Autentication Header lenght is measured in 32 bits units (minus 2 units) */
-      *pnextheader = pheader->ip6ext_nheader;
-      return ((struct ipv6_ext *) ((char *) pheader + 8 + (pheader->ip6ext_len)*4));
-      
-    case IPPROTO_FRAGMENT:
-      /* Fragment extension is 8 bytes long */
-      *pnextheader = pheader->ip6ext_nheader;
-      return ((struct ipv6_ext *) ((char *) pheader + 8 ));
-      
-      /* I don't understand them.  Just save the type and return a NULL */
-    default:
-      *pnextheader = pheader->ip6ext_nheader;
-      return (NULL);
-    }
-#else
-  return (NULL);
-#endif
-
-}
-
-#ifdef SUPPORT_IPV6
 int match_ipv6_net(struct in6_addr adx, struct in6_addr *internal_list, int *mask_list, int list_size)
 {
   static unsigned short int masks[] = { 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff };
@@ -170,12 +83,6 @@ internal_ipv6 (struct in6_addr adx)
 }
 
 int
-cloud_ipv6 (struct in6_addr adx)
-{
-  return match_ipv6_net(adx,cloud_net_listv6,cloud_net_maskv6,tot_cloud_netsv6);
-}
-
-int
 crypto_ipv6 (struct in6_addr adx)
 {
   int crypto_res, white_res;
@@ -195,9 +102,7 @@ crypto_ipv6 (struct in6_addr adx)
    }
 }
 
-#endif
 
-#ifdef SUPPORT_IPV6
 void
 IPv6_support (struct ip *pip, void *pplast, int ip_direction)
 {
@@ -213,12 +118,6 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
   //next_header=ipv6->ip6_nheader;
 
   /* decide wheater this is internal or external */
-  if (internal_wired)
-    {
-      internal_srcv6 = coming_in;
-      internal_dstv6 = !coming_in;
-    }
-  else
    {
      if (mac_filter.tot_internal_eth >0)
       {
@@ -277,11 +176,7 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
       add_histo (ip6_hop_limit_in, (float) ipv6->ip6_hlimit);
       add_histo (ip6_plen_in, (float) ntohs (ipv6->ip6_lngth));
     }
-#ifndef LOG_UNKNOWN
   else if (internal_srcv6 && internal_dstv6)
-#else
-  else
-#endif
     {
       add_histo (ip6_protocol_loc, ipv6->ip6_nheader);
       add_histo (ip6_hop_limit_loc, (float) ipv6->ip6_hlimit);
@@ -325,11 +220,7 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
       {
         add_histo (L3_protocol_in,L3_IPv6_TCP);
       }
-#ifndef LOG_UNKNOWN
      else if (internal_srcv6 && internal_dstv6)
-#else
-     else
-#endif
       { 
         add_histo (L3_protocol_loc,L3_IPv6_TCP); 
       }
@@ -344,11 +235,7 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
       {
         add_histo (L3_protocol_in,L3_IPv6_UDP);
       }
-#ifndef LOG_UNKNOWN
      else if (internal_srcv6 && internal_dstv6)
-#else
-     else
-#endif
       { 
         add_histo (L3_protocol_loc,L3_IPv6_UDP); 
       }
@@ -365,11 +252,7 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
 	L3_bitrate.in[L3_IPv6_OTHER] += (float) ntohs (ipv6->ip6_lngth);
         add_histo (L3_protocol_in,L3_IPv6_OTHER);
       }
-#ifndef LOG_UNKNOWN
      else if (internal_srcv6 && internal_dstv6)
-#else
-     else
-#endif
       { 
 	L3_bitrate.loc[L3_IPv6_OTHER] += (float) ntohs (ipv6->ip6_lngth);
         add_histo (L3_protocol_loc,L3_IPv6_OTHER);
@@ -386,7 +269,6 @@ IPv6_support (struct ip *pip, void *pplast, int ip_direction)
 
   return;
 }
-#endif
 
 char *
 findheader_ipv6 (void *pplast, struct ip *pip, unsigned int *proto_type)
@@ -463,7 +345,6 @@ findheader_ipv6 (void *pplast, struct ip *pip, unsigned int *proto_type)
 }
 
 
-#ifdef SUPPORT_IPV6
 void
 ICMPv6_support (char *next, int internal_srcv6, int internal_dstv6)
 {
@@ -479,11 +360,7 @@ ICMPv6_support (char *next, int internal_srcv6, int internal_dstv6)
     {
       add_histo (icmpv6_type_in, picmpv6->icmp6_type);
     }
-#ifndef LOG_UNKNOWN
   else if (internal_srcv6 && internal_dstv6)
-#else
-  else
-#endif
     {
       add_histo (icmpv6_type_loc, picmpv6->icmp6_type);
     }
@@ -491,7 +368,6 @@ ICMPv6_support (char *next, int internal_srcv6, int internal_dstv6)
 
   return;
 }
-#endif
 
 /*
  * gettcp:  return a pointer to a tcp header.
@@ -548,7 +424,6 @@ findheader (u_int ipproto, struct ip *pip, void **pplast)
 }
 
 
-
 /*
  * gettcp:  return a pointer to a tcp header.
  * Skips either ip or ipv6 headers
@@ -573,7 +448,6 @@ getudp (struct ip *pip, void **pplast)
   pudp = (struct udphdr *) findheader (IPPROTO_UDP, pip, pplast);
   return (pudp);
 }
-
 
 
 /* 
@@ -646,7 +520,6 @@ gethdrlength (struct ip *pip, void *plast)
 int
 getpayloadlength (struct ip *pip, void *plast)
 {
-#ifdef SUPPORT_IPV6
   struct ipv6 *pipv6;
 
   if (PIP_ISV6 (pip))
@@ -656,10 +529,8 @@ getpayloadlength (struct ip *pip, void *plast)
       return ntohs (pipv6->ip6_lngth) + 40 - gethdrlength(pip,plast);
     }
   else /* IPv4 */
-#endif
   return ntohs (pip->ip_len) - (pip->ip_hl * 4);
 }
-
 
 
 /* 
@@ -668,20 +539,17 @@ getpayloadlength (struct ip *pip, void *plast)
 inline void
 IP_COPYADDR (ipaddr * toaddr, ipaddr fromaddr)
 {
-#ifdef SUPPORT_IPV6
   if (ADDR_ISV6 (&fromaddr))
     {
       memcpy (toaddr->un.ip6.s6_addr, fromaddr.un.ip6.s6_addr, 16);
       toaddr->addr_vers = 6;
     }
   else
-#endif
     {
       toaddr->un.ip4.s_addr = fromaddr.un.ip4.s_addr;
       toaddr->addr_vers = 4;
     }
 }
-
 
 
 /*
@@ -691,117 +559,13 @@ int
 IP_SAMEADDR (ipaddr addr1, ipaddr addr2)
 {
   int ret = 0;
-#ifdef SUPPORT_IPV6
   if (ADDR_ISV6 (&addr1) && ADDR_ISV6 (&addr2))
     ret = (memcmp (addr1.un.ip6.s6_addr, addr2.un.ip6.s6_addr, 16) == 0);
   else
-#endif
   if (ADDR_ISV4 (&addr2))
     ret = (addr1.un.ip4.s_addr == addr2.un.ip4.s_addr);
   return ret;
 }
-
-
-
-#ifndef HAVE_INET_PTON
-int
-inet_pton (int af, const char *src, void *dst)
-{
-  if (af == AF_INET)
-    {
-      /* use standard function */
-      long answer = inet_addr (src);
-      if (answer != -1)
-	{
-	  *((long *) dst) = answer;
-	  return (1);
-	}
-    }
-  else if (af == AF_INET6)
-    {
-      /* YUCC - lazy for now, not fully supported */
-      int shorts[8];
-      if (sscanf (src, "%x:%x:%x:%x:%x:%x:%x:%x",
-		  &shorts[0], &shorts[1], &shorts[2], &shorts[3],
-		  &shorts[4], &shorts[5], &shorts[6], &shorts[7]) == 8)
-	{
-	  int i;
-	  for (i = 0; i < 8; ++i)
-	    ((u_short *) dst)[i] = (u_short) shorts[i];
-	  return (1);
-	}
-    }
-
-  /* else, it failed */
-  return (0);
-}
-#endif /* HAVE_INET_PTON */
-
-
-
-/*
- * my_inet_ntop: makes a string address of the 16 byte ipv6 address
- * We use our own because various machines print them differently
- * and I wanted them to all be the same
- */
-char *
-my_inet_ntop (int af, const char *src, char *dst, size_t size)
-{
-  int i;
-  u_short *src_shorts = (u_short *) src;
-  char *ret = dst;
-  Bool did_shorthand = FALSE;
-  Bool doing_shorthand = FALSE;
-
-  /* sanity check, this isn't general, but doesn't need to be */
-  if (size != INET6_ADDRSTRLEN)
-    {
-      fprintf (fp_stderr, "my_inet_ntop: invalid size argument\n");
-      exit (-1);
-    }
-
-
-  /* address is 128 bits == 16 bytes == 8 shorts */
-  for (i = 0; i < 8; i++)
-    {
-      u_short twobytes = ntohs (src_shorts[i]);
-
-      /* handle shorthand notation */
-      if (twobytes == 0)
-	{
-	  if (doing_shorthand)
-	    {
-	      /* just eat it and continue (except last 2 bytes) */
-	      if (i != 7)
-		continue;
-	    }
-	  else if (!did_shorthand)
-	    {
-	      /* start shorthand */
-	      doing_shorthand = TRUE;
-	      continue;
-	    }
-	}
-
-      /* terminate shorthand (on non-zero or last 2 bytes) */
-      if (doing_shorthand)
-	{
-	  doing_shorthand = FALSE;
-	  did_shorthand = TRUE;
-	  sprintf (dst, ":");
-	  dst += 1;
-	}
-
-      sprintf (dst, "%04x:", twobytes);
-      dst += 5;
-    }
-
-  /* nuke the trailing ':' */
-  *(dst - 1) = '\0';
-
-  return (ret);
-}
-
 
 
 /* given an IPv4 IP address, return a pointer to a (static) ipaddr struct */
@@ -821,62 +585,13 @@ IPV4ADDR2ADDR (struct in_addr *addr4)
 struct ipaddr *
 IPV6ADDR2ADDR (struct in6_addr *addr6)
 {
-#ifdef SUPPORT_IPV6
   static struct ipaddr addr;
 
   addr.addr_vers = 6;
   memcpy (&addr.un.ip6.s6_addr, &addr6->s6_addr, 16);
 
   return (&addr);
-#else
-  return (NULL);
-#endif
 
-}
-
-
-/* given an internet address (IPv4 dotted decimal or IPv6 hex colon),
-   return an "ipaddr" (allocated from heap) */
-ipaddr *
-str2ipaddr (char *str)
-{
-  ipaddr *pipaddr;
-
-  /* allocate space */
-  pipaddr = MallocZ (sizeof (ipaddr));
-
-  /* N.B. - uses standard IPv6 facility inet_pton from RFC draft */
-  if (strchr (str, '.') != NULL)
-    {
-      /* has dots, better be IPv4 */
-      pipaddr->addr_vers = 4;
-      if (inet_pton (AF_INET, str, &pipaddr->un.ip4.s_addr) != 1)
-	{
-	  if (debug)
-	    fprintf (fp_stderr, "Address string '%s' unparsable as IPv4\n", str);
-	  return (NULL);
-	}
-    }
-#ifdef SUPPORT_IPV6
-  else if (strchr (str, ':') != NULL)
-    {
-      /* has colons, better be IPv6 */
-      pipaddr->addr_vers = 6;
-      if (inet_pton (AF_INET6, str, &pipaddr->un.ip6.s6_addr) != 1)
-	{
-	  if (debug)
-	    fprintf (fp_stderr, "Address string '%s' unparsable as IPv6\n", str);
-	  return (NULL);
-	}
-    }
-#endif
-  else
-    {
-      if (debug)
-	fprintf (fp_stderr, "Address string '%s' unparsable\n", str);
-      return (NULL);
-    }
-  return (pipaddr);
 }
 
 
@@ -885,40 +600,3 @@ str2ipaddr (char *str)
 /*    -2: different address types */
 /*    -1: A < B */
 /*     0: A = B */
-/*     1: A > B */
-int
-IPcmp (ipaddr * pipA, ipaddr * pipB)
-{
-  int i;
-  int len = (pipA->addr_vers == 4) ? 4 : 16;
-  u_char *left = (unsigned char *) &pipA->un.ip4;
-  u_char *right = (unsigned char *) &pipB->un.ip4;
-
-  /* always returns -2 unless both same type */
-  if (pipA->addr_vers != pipB->addr_vers)
-    {
-      if (debug > 1)
-	{
-	  fprintf (fp_stdout, "IPcmp %s", HostAddr (*pipA));
-	  fprintf (fp_stdout, "%s fails, different addr types\n", HostAddr (*pipB));
-	}
-      return (-2);
-    }
-
-
-  for (i = 0; i < len; ++i)
-    {
-      if (left[i] < right[i])
-	{
-	  return (-1);
-	}
-      else if (left[i] > right[i])
-	{
-	  return (1);
-	}
-      /* else ==, keep going */
-    }
-
-  /* if we got here, they're the same */
-  return (0);
-}

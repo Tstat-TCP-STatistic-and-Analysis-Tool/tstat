@@ -22,11 +22,6 @@
 #include <sys/param.h>
 #include <sys/time.h>
 
-#ifdef __ANDROID__
-#include <sys/endian.h>
-#undef swap16
-#undef swap32
-#endif
 
 #define VALID_VERSION 2		/*the version must be 2 */
 #define VALID_PT      127	/* the PT must be equal or smaller than  127 */
@@ -94,7 +89,7 @@
 #define RTCP_PT_PSFB		206	/* Payload-specific Feedback */
 #define RTCP_PT_XR		207	/* Extended Report */
 
-#define RTP_LITTLE_ENDIAN 1
+/* RTP/RTCP headers are described for little endian hosts (x86, ARM) */
 
 /* RFC 7983 possible protocols multiplexed with RTP/RTCP */
 #define RFC7983_UNK  0
@@ -108,23 +103,12 @@
 
 struct rtphdr
 {
-#if RTP_BIG_ENDIAN
-  unsigned int v:2;		/* protocol version */
-  unsigned int p:1;		/* padding flag */
-  unsigned int x:1;		/* header extension flag */
-  unsigned int cc:4;		/* CSRC count */
-  unsigned int m:1;		/* marker bit */
-  unsigned int pt:7;		/* payload type */
-#elif RTP_LITTLE_ENDIAN
   unsigned int cc:4;		/* CSRC count */
   unsigned int x:1;		/* header extension flag */
   unsigned int p:1;		/* padding flag */
   unsigned int v:2;		/* protocol version */
   unsigned int pt:7;		/* payload type */
   unsigned int m:1;		/* marker bit */
-#else
-#error Define one of RTP_LITTLE_ENDIAN or RTP_BIG_ENDIAN
-#endif
   u_int16_t seqno;		/* sequence number */
   u_int32_t ts;			/* timestamp */
   u_int32_t ssrc;		/* synchronization source */
@@ -143,13 +127,8 @@ struct rtcp_SR
 struct rtcp_RR
 {
   u_int32_t ssrc;
-#if RTP_BIG_ENDIAN
-  u_int32_t c_lost:24;
-  u_int32_t f_lost:8;
-#else
   u_int32_t f_lost:8;
   u_int32_t c_lost:24;
-#endif
   u_int32_t max_seqno_rx;
   u_int32_t jitter;
   u_int32_t lsr;

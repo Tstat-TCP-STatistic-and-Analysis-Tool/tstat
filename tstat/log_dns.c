@@ -16,7 +16,6 @@
  *
 */
 
-#ifdef HAVE_LDNS
 
 #include <ldns/ldns.h>
 #include "tstat.h"
@@ -82,13 +81,11 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
     if ( (ip_addr_a >= LB_MULTICAST && ip_addr_a < UB_MULTICAST) || (ip_addr_b >= LB_MULTICAST && ip_addr_b < UB_MULTICAST) )
       return;
   }
-  #ifdef SUPPORT_IPV6
   else
   {
     if (pup->addr_pair.b_address.un.ip6.s6_addr[0] == 0xFF || pup->addr_pair.a_address.un.ip6.s6_addr[0] == 0xFF)
       return;
   }
-  #endif
 
   // Check it is a well formed DNS packet
   ldns_status ret = ldns_wire2pkt ( &pkt, (const uint8_t *) hdr + UDP_HDR_SZ , getpayloadlength(pip, plast) - UDP_HDR_SZ  ) ;
@@ -96,7 +93,7 @@ void dns_flow_stat(struct ip *pip, void *pproto, int tproto, void *pdir,
   {
 
     // Since it is a well formed DNS packet, we might set the UDP connection type to DNS, if not yet identified
-    // This should cover all the less common DNS query types that IPP2P does not consider
+    // This should cover all the less common DNS query types that the UDP DPI (udpL7.c) does not consider
 
     if (thisdir->type == UDP_UNKNOWN)
        thisdir->type = DNS;
@@ -475,11 +472,6 @@ static inline char * rr_type2str(ldns_rr_type rcode)
       case LDNS_RR_TYPE_DNSKEY:
           return ( "DNSKEY");
           break;
-#ifdef LDNS_RR_TYPE_NSEC3PARAM
-      case LDNS_RR_TYPE_NSEC3PARAM:
-          return ( "NSEC3PARAM");
-          break;
-#endif /* LDNS_RR_TYPE_NSEC3PARAM */
       case LDNS_RR_TYPE_NSEC3:
           return ( "NSEC3");
           break;
@@ -526,4 +518,3 @@ static inline char * rr_type2str(ldns_rr_type rcode)
 }
 
 
-#endif //HAVE_LDNS

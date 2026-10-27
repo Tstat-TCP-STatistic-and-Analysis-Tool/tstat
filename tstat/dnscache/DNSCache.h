@@ -31,12 +31,6 @@ extern "C"{
 	struct DNS_data* getEntry(
 			unsigned long int client_ip,
 			unsigned long int server_ip);
-	unsigned char* get(
-			unsigned long int,
-			unsigned long int);
-	struct in_addr* get_dns_server(
-			unsigned long int client_ip,
-			unsigned long int server_ip);
 #ifdef __cplusplus
 }
 #endif

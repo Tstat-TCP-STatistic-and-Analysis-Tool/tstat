@@ -37,10 +37,8 @@
 #define PROTO_DEBUG_LEVEL 2
 #define PROTO_DEBUG (PROTO_DEBUG_LEVEL>0 && debug>=PROTO_DEBUG_LEVEL)
 extern int debug;
-extern Bool runtime_engine,bayes_engine;
-#ifdef DNS_CACHE_PROCESSOR
+extern Bool runtime_engine;
 extern Bool dns_enabled;
-#endif
 
 /* chain of protocol analyzer */
 struct proto *proto_list_head;
@@ -49,8 +47,6 @@ static int proto_num = 0;
 /* any new protocol analyzer module MUST export these two functions:  */
 void *dummy_init(void);
 void *getdummy (void *pproto, int tproto, void *plast, void *phdr);
-void dummy_flow_stat (struct ip *pip, void *pproto, int tproto, ucb * pdir,
-		      int dir, void *hdr, void *plast);
 
 //===================================================================================
 //  register new protocol analyzer engines
@@ -74,41 +70,19 @@ proto_init ()
         NULL);
   }
 
-/* 
-   The following plugin is a wrapper module to call the behavioral 
-   classification procedures after the regular plugins but before the
-   the dump module. It should be registered before everything else (but after the dump
-   plugin if activated). behavioral_flow_wrap() is defined in udp.c
-*/
-  proto_register (PROTOCOL_BOTH, "BEHAVIORAL", "Behavioral Classification",
-		  (void *) getdummy,
-		  (void *) behavioral_flow_wrap,
-		  (void *) dummy_init,
-		  NULL);
-
   proto_register (PROTOCOL_TCP, "HTTP", "HTTP Requests",
 		  (void *) gethttp,
 		  (void *) http_flow_stat,
 		  (void *) http_init,
 		  (void *) make_http_conn_stats);
 
-#ifdef STREAMING_CLASSIFIER
-  proto_register (PROTOCOL_TCP, "STREAMING", "HTTP Video Streaming",
-		  (void *) getvideoL7,
-		  (void *) videoL7_flow_stat,
-		  (void *) videoL7_init,
-		  (void *) make_videoL7_conn_stats);
-#endif
 
-#ifdef HAVE_LDNS
   proto_register (PROTOCOL_UDP, "LOG_DNS", "Log DNS generator",
 		  (void *) check_dns,
 		  (void *) dns_flow_stat,
           NULL,
           NULL);
-#endif
 
-#ifdef DNS_CACHE_PROCESSOR
    if (dns_enabled)
     {
       proto_register (PROTOCOL_UDP, "DNS", "DNS Cache Processor",
@@ -117,7 +91,6 @@ proto_init ()
 		  (void *) dns_cache_init,
           (void *) dns_cache_status);
     }
-#endif
 
   proto_register (PROTOCOL_TCP, "TCPL7", "Layer 7 TCP Protocols",
 		  (void *) gettcpL7,
@@ -131,24 +104,12 @@ proto_init ()
           NULL,
           (void *) make_rtp_conn_stats);
 
-#ifdef P2P_CLASSIFIER
-  proto_register (PROTOCOL_BOTH, "P2P", "P2P Protocols",
-		  (void *) getp2p,
-		  (void *) p2p_flow_stat,
-		  (void *) p2p_init,
-          (void *) make_p2p_conn_stats);
-#endif
+  proto_register (PROTOCOL_UDP, "UDPL7", "Layer 7 UDP Protocols",
+		  (void *) getudpL7,
+		  (void *) udpL7_flow_stat,
+		  NULL,
+		  (void *) make_udpL7_conn_stats);
 
-#ifdef SKYPE_CLASSIFIER
-   if (bayes_engine)
-    {
-      proto_register (PROTOCOL_BOTH, "SKYPE", "Skype",
-		  (void *) getSkype,
-		  (void *) skype_flow_stat,
-		  (void *) skype_init, 
-          (void *) make_skype_conn_stats);
-    }
-#endif
 
   /* 
      example to add a new protocol analyzer:
@@ -238,15 +199,12 @@ proto_analyzer (struct ip *pip, void *pproto, int tproto, void *pdir, int dir,
 
 	      protocol->analyze (pip, pproto, tproto, pdir, dir, ret, plast);
 	    }
-#if PROTO_DEBUG_LEVEL
 	  else
 	    {
 	      if (PROTO_DEBUG)
 		fprintf (fp_stderr, "nope!\n");
 	    }
-#endif
 	}
-#if PROTO_DEBUG_LEVEL
       else
 	{
 	  if (PROTO_DEBUG)
@@ -254,7 +212,6 @@ proto_analyzer (struct ip *pip, void *pproto, int tproto, void *pdir, int dir,
 		     protocol->name, proto_description (protocol->tproto),
 		     proto_description (tproto));
 	}
-#endif
 
       protocol = protocol->next;
     }
@@ -282,7 +239,6 @@ make_proto_stat (void *thisflow, int tproto)
 	   if(protocol->stat != NULL)
               protocol->stat (thisflow, tproto);
 	}
-#if PROTO_DEBUG_LEVEL
       else
 	{
 	  if (PROTO_DEBUG)
@@ -290,7 +246,6 @@ make_proto_stat (void *thisflow, int tproto)
 		     protocol->name, proto_description (protocol->tproto),
 		     proto_description (tproto));
 	}
-#endif
       protocol = protocol->next;
     }
 
@@ -317,22 +272,3 @@ getdummy (void *pproto, int tproto, void *plast, void *p)
   return p;
 }
 
-void
-dummy_flow_stat (struct ip *pip, void *pproto, int tproto, ucb * pdir,
-		 int dir, void *hdr, void *plast)
-{
-  struct udphdr *pudp = pproto;
-  struct tcphdr *ptcp = pproto;
-  fprintf (fp_stderr, "tproto is %d so i use %shdr\n", tproto,
-	   tproto == PROTOCOL_TCP ? "tpc" : "udp");
-  if (tproto == PROTOCOL_TCP)
-    {
-      fprintf (fp_stdout, "TCP: sport=%d, dport=%d\n", 
-        ptcp->th_sport, ptcp->th_dport);
-    }
-  else
-    {
-      fprintf (fp_stdout, "UDP: sport=%d, dport=%d\n", 
-        pudp->uh_sport, pudp->uh_dport);
-    }
-}

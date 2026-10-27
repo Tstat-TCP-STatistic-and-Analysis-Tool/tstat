@@ -1,0 +1,8 @@
+# build artifacts
+/build/
+/tstat/tstat
+/libtstat/libtstat.so*
+/libtstat/libtstat.pc
+/libtstat-demo/demo
+/test-pcaps/
+/quic-pcaps/

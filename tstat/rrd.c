@@ -17,20 +17,14 @@
  * v1.2.0 memory leak fixed
 */
 
-#ifdef HAVE_RRDTOOL
 
 #ifdef RRD_THREADED
 #define _GNU_SOURCE
 #include <fcntl.h>
-#include <unistd.h>
-#include <sys/resource.h>
-#include <sys/syscall.h>
 #endif
 
-#include <assert.h>
 #include "tstat.h"
 
-extern Bool histo_engine;
 extern Bool live_flag;
 
 /* increase the threshold to get rid of proto dbg msg */
@@ -58,6 +52,8 @@ int rrdtool_create_args (char *pName, char *aLine, int argc, char **argv);
 int command_pipe[2];
 void * call_rrd_update(void*arg);
 pthread_t write_thread;
+static Bool write_thread_started = FALSE;
+static volatile Bool write_thread_draining = FALSE;
 #endif
 
 typedef struct _rrd
@@ -134,6 +130,7 @@ rrdtool_init ()
 
   /* Create the thread which writes RRD on disk (the consumer) */
   pthread_create (&write_thread, NULL, (void *) &call_rrd_update, (void *) NULL);
+  write_thread_started = TRUE;
 
 #else
 
@@ -491,6 +488,8 @@ rrdtool_create (struct double_histo_list *h)
 
   if (!conf.rrd)
     return;
+  if (conf.hit)
+    rrdtool_create_command (h->name, "hit");
   if (conf.avg)
     rrdtool_create_command (h->name, "avg");
   if (conf.min)
@@ -639,20 +638,7 @@ rrdtool_create_command (const char *name, const char *what)
 
   if (RRD_DEBUG)
     fprintf (fp_stderr, "rrdtool: create(%s,%s)\n", name, what);
-#ifdef RRD_TREE
-  sprintf (temp_rrd.file, "%s/%s", rrd.conf.path, name, what);
-  struct stat fbuf;
-  if (!((stat (temp_rrd.file, &fbuf) == 0) && S_ISDIR (fbuf.st_mode)))
-    {
-      mkdir (temp_rrd.file, 0775);
-      if (debug > 1)
-	fprintf (fp_stderr, "RRDtool database path <%s> created\n",
-		 temp_rrd.file);
-    }
-  sprintf (temp_rrd.file, "%s/%s/%s.rrd", rrd.conf.path, name, what);
-#else
   sprintf (temp_rrd.file, "%s/%s.%s.rrd", rrd.conf.path, name, what);
-#endif
 
   rrd.time_update = (unsigned long) current_time.tv_sec;
 
@@ -697,11 +683,7 @@ rrdtool_update_command (const char *name, const char *what, double val)
 {
   if (RRD_DEBUG)
     fprintf (fp_stderr, "rrdtool: update(%s,%s,%f)\n", name, what, val);
-#ifdef RRD_TREE
-  sprintf (rrd.file, "%s/%s/%s.rrd", rrd.conf.path, name, what);
-#else
   sprintf (rrd.file, "%s/%s.%s.rrd", rrd.conf.path, name, what);
-#endif
 
   /* at the first call of this function, all the needed rrd 
      files are created with the start time set appropriately */
@@ -712,7 +694,7 @@ rrdtool_update_command (const char *name, const char *what, double val)
     rrd.time_update = (unsigned long) current_time.tv_sec;
 
 #ifdef RRD_THREADED    /* Write the RRD command in the pipe, execution and disk writing performed by secondary thread */
-  sprintf (rrd.cmd, "update %s %ld:%f\n", rrd.file, rrd.time_update, val);
+  sprintf (rrd.cmd, "%s %ld:%f\n", rrd.file, rrd.time_update, val);
   if (RRD_DEBUG)
     fprintf (fp_stderr, "rrdtool: rrd_update('%s')\n", rrd.cmd);
   
@@ -740,46 +722,65 @@ rrdtool_update_command (const char *name, const char *what, double val)
 }
 
 #ifdef RRD_THREADED
+/* Secondary thread executing the RRD updates queued in command_pipe.
+   Each line is "<rrd file> <timestamp>:<value>". It uses rrd_update_r(),
+   which (unlike rrd_update()) does not rely on getopt and on the global
+   rrd.argv buffers, also used by the main thread when creating the files */
 void * call_rrd_update(void*arg){
 	char buffer [2000];
-	int i = 0;
-	time_t t;
-	srand((unsigned) time(&t));
+	char *value;
+	const char *update_argv[1];
 
 	/* Open pipe as a stream */
 	FILE * buffer_pipe = fdopen(command_pipe[0], "r");
 	rrd_clear_error ();
 
-	/* Infinite loop on pipe */
-	while(1){
+	/* Loop until the write end of the pipe is closed by rrdtool_close() */
+	while (fgets(buffer, sizeof(buffer), buffer_pipe) != NULL) {
 
-		/* Sleep 10ms in order not to saturate the disk write capacity */
-		usleep(10000);
-		fgets(buffer,2000,buffer_pipe);
+		/* Sleep 10ms in order not to saturate the disk write capacity,
+		   unless we are flushing the queue before exiting */
+		if (!write_thread_draining)
+			usleep(10000);
 
-		/* Replace \n with \0 */
-		buffer[strlen(buffer)-1]= '\0';
+		/* Replace \n with \0 and split file name and value */
+		buffer[strcspn(buffer, "\n")] = '\0';
+		value = strrchr(buffer, ' ');
+		if (value == NULL)
+			continue;
+		*value++ = '\0';
 
 		/* Execute update */
-		rrdtool_str2argv(buffer);
-		optind = 0; 
-		opterr = 0;
-		rrd_update (rrd.argc, rrd.argv);
-	
+		update_argv[0] = value;
+		rrd_update_r (buffer, NULL, 1, update_argv);
+
 		/* Check errors */
 		if (rrd_test_error ())
 		{
-			fprintf (fp_stderr, "rrdtool: update command:\n'%s'\n", buffer);
+			fprintf (fp_stderr, "rrdtool: update command:\n'%s %s'\n", buffer, value);
 			fprintf (fp_stderr, "rrdtool: update error!\n%s\n", rrd_get_error ());
 			if (rrd.fatal)
 				exit (1);
 			rrd_clear_error ();
 		}
-		
 	}
+	fclose (buffer_pipe);
 	return NULL;
 }
 #endif
 
-/*-----------------------------------------------------------*/
+/* Write all the pending RRD updates before exiting */
+void
+rrdtool_close ()
+{
+#ifdef RRD_THREADED
+  if (!write_thread_started)
+    return;
+  write_thread_draining = TRUE;
+  close (command_pipe[1]);
+  pthread_join (write_thread, NULL);
+  write_thread_started = FALSE;
 #endif
+}
+
+/*-----------------------------------------------------------*/

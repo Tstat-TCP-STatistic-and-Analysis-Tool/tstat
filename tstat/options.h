@@ -20,4 +20,5 @@
 void options_parse_ini_arg (char *param_name, param_value param_value);
 void options_parse_start_section (void);
 void options_parse_end_section (void);
+Bool is_obsolete_param (char *param_name, char **obsolete);
 #endif

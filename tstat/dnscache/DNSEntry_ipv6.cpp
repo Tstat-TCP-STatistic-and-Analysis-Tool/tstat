@@ -33,20 +33,6 @@ void DNSEntryIPv6::deleteReferences(IPv6Hashtable& ip_hashtable){
 	destroyEntry();
 }
 
-//unsigned long int DNSEntry::getDNSServer(){
-//	return *this->dns_server;
-//}
-
-struct in6_addr* DNSEntryIPv6::getDNSServer(){
-	return this->dns_server;
-}
-
-
-unsigned char* DNSEntryIPv6::getHostname(){
-    char *fqdn = strdup((const char *)hostname);
-	return (unsigned char *)fqdn;
-}
-
 struct DNS_data_IPv6* DNSEntryIPv6::getDNSData()
 {
 	dns_data_ipv6.hostname = strdup((const char *)hostname);

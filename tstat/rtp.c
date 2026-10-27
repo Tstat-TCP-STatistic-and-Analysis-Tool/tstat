@@ -16,207 +16,8 @@
  *
 */
 
-/* Log file format:
- * V2
- * - request and response on the same line
- * - values not available are substituted by zeroes
- * The meaning of the fields 9-X depend on the protocol used
- * +-------+-------------------------------------------------------------+-----------+
- * | Field | Description                                                 | Protocol  |
- * +-------+-------------------------------------------------------------+-----------+
- * |    01 | L4 Protocol: 1 = TCP, 2 = UDP                               | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * | Request
- * +-------+--------------------------------------------------------------------------
- * | Field | Description
- * +-------+-------------------------------------------------------------+-----------+
- * |    02 | Protocol: 3 = RTP, 4 = RTCP                                 | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    03 | Source IP address                                           | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    04 | Source port number                                          | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    05 | Internal source? (computed using the -N netmask_file)       | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    06 | Number of packets Tstat has seen belonging to the flow      | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    07 | Inter Packet Gap (IPG) [ms]                                 | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    08 | Jitter (average)                                            | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    09 | Jitter (max)                                                | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    10 | Jitter (min)                                                | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    11 | Time to live (TTL) (average)                                | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    12 | Time to live (TTL) (max)                                    | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    13 | Time to live (TTL) (min)                                    | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    14 | Start time (EPOCH format) [s]                               | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    15 | Duration [s]                                                | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    16 | Data transfered [bytes]                                     | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    17 | Average speed [bit/s]                                       | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    18 | SSRC                                                        | RTP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    19 | Lost packets                                                | RTP       |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    20 | Out of sequence packets computed by Tstat                   | TCP,RTP   |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    21 | Duplicate packets computed by Tstat                         | TCP,RTP   |
- * |       |  - if RTP, computed by Tstat using a window based algorithm |           |
- * |       |  - if TCP, computed as retrasmissions                       |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    22 | Late packets computed by Tstat                              | RTP       |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    23 | RTP payload type                                            | RTP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    24 | Bogus reset                                                 | RTP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    25 | Cumulative packet loss:                                     | RTCP      |
- * |       |  - each lost packets increments this counter,               |           |
- * |       |    each duplicated packets decremnets it from RTCP          |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    26 | Fraction of lost packets                                    | RTCP      |
- * |       |  - extracted from the RTCP header [%]                       |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    27 | Associated RTP flow length [packets]                        | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    28 | Associated RTP flow length [bytes]                          | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    29 | Round Trip Time (RTT) (average) [ms]                        | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    30 | Round Trip Time (RTT) (max) [ms]                            | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    31 | Round Trip Time (RTT) (min) [ms]                            | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    32 | Round Trip Time (RTT) (samples) [ms]                        | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    33 | Truncated RTCP header                                       | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    34 | First HTTP packet (EPOCH) [s]                               | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    35 | First RTSP packet (EPOCH) [s]                               | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    36 | First RTP packet (EPOCH) [s]                                | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    37 | First ICY packet (EPOCH) [s]                                | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * | Response
- * +-------+-------------------------------------------------------------+-----------+
- * |    38 | Protocol: 3 = RTP, 4 = RTCP                                 | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    39 | Destination IP address                                      | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    40 | Destination port number                                     | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    41 | Internal destination? (computed using the -N netmask_file)  | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    42 | Number of packets Tstat has seen belonging to the flow      | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    43 | Inter Packet Gap (IPG) [ms]                                 | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    44 | Jitter (average)                                            | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    45 | Jitter (max)                                                | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    46 | Jitter (min)                                                | All       |
- * |       |  - if RTP, computed by Tstat as in RFC3550 [ms]             |           |
- * |       |  - if RTCP, extracted from the RTCP header [codec           |           |
- * |       |    timestamps units]                                        |           |
- * |       |  - if TCP, computed using only data packets [ms]            |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    47 | Time to live (TTL) (average)                                | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    48 | Time to live (TTL) (max)                                    | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    49 | Time to live (TTL) (min)                                    | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    50 | Start time (EPOCH format) [s]                               | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    51 | Duration [s]                                                | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    52 | Data transfered [bytes]                                     | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    53 | Average speed [bit/s]                                       | All       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    54 | SSRC                                                        | UDP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    55 | Lost packets                                                | RTP       |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    56 | Out of sequence packets computed by Tstat                   | TCP,RTP   |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    57 | Duplicate packets computed by Tstat                         | TCP,RTP   |
- * |       |  - if RTP,computed by Tstat using a window based algorithm  |           |
- * |       |  - if TCP,computed as retrasmissions                        |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    58 | Late packets computed by Tstat                              | RTP       |
- * |       |  - computed by Tstat using a window based algorithm         |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    59 | RTP payload type                                            | RTP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    60 | Bogus reset                                                 | RTP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    61 | Cumulative packet loss:                                     | RTCP      |
- * |       |  - each lost packets increments this counter,               |           |
- * |       |    each duplicated packets decremnets it from RTCP          |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    62 | Fraction of lost packets                                    | RTCP      |
- * |       |  - extracted from the RTCP header [%]                       |           |
- * +-------+-------------------------------------------------------------+-----------+
- * |    63 | Associated RTP flow length [packets]                        | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    64 | Associated RTP flow length [bytes]                          | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    65 | Round Trip Time (RTT) (average) [ms]                        | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    66 | Round Trip Time (RTT) (max) [ms]                            | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    67 | Round Trip Time (RTT) (min) [ms]                            | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    68 | Round Trip Time (RTT) (samples) [ms]                        | TCP, RTCP |
- * +-------+-------------------------------------------------------------+-----------+
- * |    69 | Truncated RTCP header                                       | RTCP      |
- * +-------+-------------------------------------------------------------+-----------+
- * |    70 | First HTTP packet (EPOCH) [s]                               | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    71 | First RTSP packet (EPOCH) [s]                               | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    72 | First RTP packet (EPOCH) [s]                                | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- * |    73 | First ICY packet (EPOCH) [s]                                | TCP       |
- * +-------+-------------------------------------------------------------+-----------+
- */
+/* RTP/RTCP analysis. The columns of log_mm_complete are described in the
+   header written by write_log_header() (tstat.c) */
 
 #include "tstat.h"
 
@@ -238,12 +39,8 @@ extern int debug;
 #define NOT_IN_SEQ 3		/* come reord */
 #define DUP 4
 
-#ifndef RTP_SSRC_MAX_SINGLETON
 #define RTP_SSRC_MAX_SINGLETON 10
-#endif
-#ifndef RTP_SSRC_SINGLETON_THRESHOLD
 #define RTP_SSRC_SINGLETON_THRESHOLD 1
-#endif
 
 
 void rtp_plus_check (ucb *thisdir, struct rtphdr *prtp, int dir, struct ip *pip, struct udphdr *pudp, void *plast);
@@ -714,46 +511,6 @@ int rtp_extensions_size(struct rtphdr *prtp)
 //     printf(" %d bytes\n",4*ntohs(get_u16(base,2)));
      extension_size += 4*ntohs(get_u16(base,2));
      
-#ifdef NAVIGATE_EXTENSIONS
-     // experimental code to navigate the RTP extensions
-     {
-       int ext_ID;
-       int ext_len;
-       int ext_num;
-       int ext_size = 4*ntohs(get_u16(base,2));
-       // printf("Dimensione estensioni: %d - ",ext_size);
-
-       int ext_offset = 0;
-       int j;
-       while (ext_offset < ext_size)
-       {
-           ext_ID = (get_u8(base,4+ext_offset) & 0x00f0 ) >> 4;
-           ext_len = (get_u8(base,4+ext_offset) & 0x000f ) ;
-           if (ext_ID==0 && ext_len == 0)
-            {
-                ext_offset += 1;
-          //      printf("PAD - ");
-            }
-           else if (ext_ID<15)
-           {
-             // printf("ID: %d LEN: %d - ",ext_ID,ext_len+1);
-             printf("(%d,",ext_ID);
-             for (j=0;j<=ext_len;j++)
-              { 
-                printf("%02x",get_u8(base,4+ext_offset+1+j));
-              }
-              printf(") ");
-             ext_offset += ext_len+1+1;
-           }
-           else 
-           {
-            //   printf("ID: %d ",ext_ID);
-               break;
-           }
-       } 
-       printf("\n");
-    }
-#endif
 
    }
   else if (get_u8(base,0)==0x10 && (get_u8(base,1) & 0xf0 ) == 0 )
@@ -851,9 +608,6 @@ rtp_flow_stat (struct ip *pip, void *pproto, int tproto, void *pdir, int dir,
 	rtp_plus_stat(thisdir, prtp, dir, pip, pudp, plast);
 	break;
       }
-    case SKYPE_E2E:
-    case SKYPE_OUT:
-    case SKYPE_SIG:
     default:
 	break;
       
@@ -996,25 +750,9 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
                {
                  case OUT_FLOW:
                    add_histo (L7_UDP_num_out, L7_FLOW_RTP);
-                   if ( (dir==C2S && thisdir->pup->cloud_dst) || (dir==S2C && thisdir->pup->cloud_src))
-                    {
-                      add_histo (L7_UDP_num_c_out, L7_FLOW_RTP);
-                    }
-                   else
-                    {
-                      add_histo (L7_UDP_num_nc_out, L7_FLOW_RTP);
-                    }
                    break;
                  case IN_FLOW:
                    add_histo (L7_UDP_num_in, L7_FLOW_RTP);
-                   if ( (dir==C2S && thisdir->pup->cloud_src) || (dir==S2C && thisdir->pup->cloud_dst))
-                    {
-                      add_histo (L7_UDP_num_c_in, L7_FLOW_RTP);
-                    }
-                   else
-                    {
-                      add_histo (L7_UDP_num_nc_in, L7_FLOW_RTP);
-                    }
                    break;
                  case LOC_FLOW:
                    add_histo (L7_UDP_num_loc, L7_FLOW_RTP);
@@ -1076,26 +814,10 @@ rtp_plus_check (ucb * thisdir, struct rtphdr *prtp, int dir, struct ip *pip, str
              switch (in_out_loc(thisdir->pup->internal_src, thisdir->pup->internal_dst,dir))
               {
                 case OUT_FLOW:
-                  add_histo (L7_UDP_num_out, L7_FLOW_RTCP);add_histo (L7_UDP_num_out, L7_FLOW_RTCP);
-	          if ( (dir==C2S && thisdir->pup->cloud_dst) || (dir==S2C && thisdir->pup->cloud_src))
-	           {
-            	     add_histo (L7_UDP_num_c_out, L7_FLOW_RTCP);
-	           }
-	          else
-	           {
-            	    add_histo (L7_UDP_num_nc_out, L7_FLOW_RTCP);
-	           }
+                  add_histo (L7_UDP_num_out, L7_FLOW_RTCP);
                 break;
               case IN_FLOW:
                  add_histo (L7_UDP_num_in, L7_FLOW_RTCP);
-	         if ( (dir==C2S && thisdir->pup->cloud_src) || (dir==S2C && thisdir->pup->cloud_dst))
-	          {
-            	    add_histo (L7_UDP_num_c_in, L7_FLOW_RTCP);
-	          }
-	        else
-	          {
-            	    add_histo (L7_UDP_num_nc_in, L7_FLOW_RTCP);
-	          }
                 break;
               case LOC_FLOW:
                 add_histo (L7_UDP_num_loc, L7_FLOW_RTCP);
@@ -1341,10 +1063,6 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
   int i, freq, index, delta_seq, delta_seq_win;
   double period;
   double delta_t, t, ts, transit, d;
-#ifdef LOG_OOO
-  int seg_type = IN_SEQ;
-  extern FILE *fp_dup_ooo_log;
-#endif
 
 //  u_int32_t pssrc = swap32 (prtp->ssrc);
   u_int32_t pts = swap32 (prtp->ts);
@@ -1514,9 +1232,6 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 
       if (delta_seq_win == 0)
 	{
-#ifdef LOG_OOO
-	  seg_type = DUP;
-#endif
 	  f_rtp->n_dup++;
 	}
 
@@ -1526,9 +1241,6 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
          considered an out of sequence */
       if ((u_int16_t) (f_rtp->largest_seqno + 1) != pseq)
 	{
-#ifdef LOG_OOO
-	  seg_type = NOT_IN_SEQ;
-#endif
 	  f_rtp->n_out_of_sequence++;
 
 	  if (pup->internal_src && !pup->internal_dst)
@@ -1556,11 +1268,7 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 		}
 
 	    }
-#ifndef LOG_UNKNOWN
 	  else if (pup->internal_src && pup->internal_dst)
-#else
-          else
-#endif
 	    {
 	      add_histo (mm_oos_p_loc, 1);
 	    }
@@ -1610,11 +1318,7 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 		      add_histo (mm_reord_delay_out, delay);
 		    }
 		}
-#ifndef LOG_UNKNOWN
 	      else if (pup->internal_src && pup->internal_dst)
-#else
-              else
-#endif
 		{
 		  add_histo (mm_reord_p_n_loc, 1);
 		  add_histo (mm_reord_delay_loc, delay);
@@ -1633,23 +1337,14 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
       /* This packet is late than it doesn't belong to the present window */
       if (delta_seq_win >= OVERFLOW_TH)
 	{
-#ifdef LOG_OOO
-	  seg_type = LATE;
-#endif
 	  f_rtp->n_late++;
 	}
       else if (delta_seq_win == 0)
 	{
-#ifdef LOG_OOO
-	  seg_type = DUP;
-#endif
 	  f_rtp->n_dup++;
 	}
       else if (delta_seq_win > RTP_WIN)
 	{
-#ifdef LOG_OOO
-	  seg_type = LOST;
-#endif
 	  f_rtp->n_lost++;
 	  f_rtp->burst++;
 	  f_rtp->packets_win[index] = pseq;
@@ -1680,11 +1375,7 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 		  add_histo (mm_burst_loss_out, f_rtp->burst);
 		}
 	    }
-#ifndef LOG_UNKNOWN
 	  else if (pup->internal_src && pup->internal_dst)
-#else
-          else
-#endif
 	    {
 	      add_histo (mm_burst_loss_loc, f_rtp->burst);
 	    }
@@ -1697,12 +1388,6 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
          out of sequence */
       if ((u_int16_t) (f_rtp->largest_seqno + 1) != pseq)
 	{
-#ifdef LOG_OOO
-	  if (seg_type == IN_SEQ)
-	    {
-	      seg_type = NOT_IN_SEQ;
-	    }
-#endif
 	  f_rtp->n_out_of_sequence++;
 
 	  if (pup->internal_src && !pup->internal_dst)
@@ -1729,11 +1414,7 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 		  add_histo (mm_oos_p_out, 1);
 		}
 	    }
-#ifndef LOG_UNKNOWN
 	  else if (pup->internal_src && pup->internal_dst)
-#else
-          else
-#endif
 	    {
 	      add_histo (mm_oos_p_loc, 1);
 	    }
@@ -1783,11 +1464,7 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
 		      add_histo (mm_reord_delay_out, delay);
 		    }
 		}
-#ifndef LOG_UNKNOWN
 	      else if (pup->internal_src && pup->internal_dst)
-#else
-              else
-#endif
 		{
 		  add_histo (mm_reord_p_n_loc, 1);
 		  add_histo (mm_reord_delay_loc, delay);
@@ -1801,79 +1478,6 @@ rtp_stat (ucb * thisdir, struct rtp *f_rtp, struct rtphdr *prtp, int dir,
     }
 
 
-#ifdef LOG_OOO
-  if (seg_type != IN_SEQ)
-    {
-      wfprintf (fp_dup_ooo_log, "R: %f ",
-	       (elapsed (first_packet, current_time) / 1000.0));
-
-      if (dir == C2S)
-	{
-	  if (pup->crypto_src==FALSE)
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostName (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-          else
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostNameEncrypted (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	  if (pup->crypto_dst==FALSE)
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostName (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	  else
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostNameEncrypted (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	}
-      else
-	{
-	  if (pup->crypto_dst==FALSE)
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostName (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-          else
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostNameEncrypted (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	  if (pup->crypto_src==FALSE)
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostName (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	  else
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostNameEncrypted (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	}
-      wfprintf (fp_dup_ooo_log, " %d", seg_type);
-
-      if ((pup->internal_src && !pup->internal_dst && dir == C2S) ||
-	  (!pup->internal_src && pup->internal_dst && dir == S2C))
-	wfprintf (fp_dup_ooo_log, " %d\n", 1) /* uscente */ ;
-
-      if ((pup->internal_src && !pup->internal_dst && dir == S2C) ||
-	  (!pup->internal_src && pup->internal_dst && dir == C2S))
-	wfprintf (fp_dup_ooo_log, " %d\n", 0) /* entrante */ ;
-
-#ifndef LOG_UNKNOWN
-      if ((pup->internal_src && pup->internal_dst))
-#endif
-	wfprintf (fp_dup_ooo_log, " %d\n", 2) /* Locale */ ;
-
-    }
-#endif
   f_rtp->last_time = current_time;
 }
 
@@ -1968,11 +1572,7 @@ rtcp_stat (struct ucb *thisdir, struct rtcp *f_rtcp, struct rtphdr *prtp, int di
 		}
 	    }
 	}
-#ifndef LOG_UNKNOWN
       else if (pup->internal_src && pup->internal_dst)
-#else
-      else
-#endif
 	{
 	  if (delta_sr != 0)
 	    {
@@ -2153,11 +1753,7 @@ rtcp_stat (struct ucb *thisdir, struct rtcp *f_rtcp, struct rtphdr *prtp, int di
 		}
 	    }
 	}
-#ifndef LOG_UNKNOWN
       else if (pup->internal_src && pup->internal_dst)
-#else
-      else
-#endif
 	{
 	  add_histo (rtcp_jitter_loc, jitter);
 	  add_histo (rtcp_f_lost_loc, f_rtcp->f_lost / 256.0 * 100.0);
@@ -2538,10 +2134,6 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
   double etime;
   int max_index, index, min_val;
   int uni_multi = UNICAST;
-#ifdef LOG_OOO
-  int seg_type = IN_SEQ;
-  extern FILE *fp_dup_ooo_log;
-#endif
   extern unsigned int ip_obfuscate_mask;
 
   f_rtp = thisdir->flow_ptr.rtp_ptr;
@@ -2584,10 +2176,8 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
       else
 	uni_multi = UNICAST;
     }
-#ifdef SUPPORT_IPV6
   else
     {
-      unsigned char multicast_byte;
       if (dir == C2S)
 	{
 	  if (pup->addr_pair.b_address.un.ip6.s6_addr[0] == 0xFF)
@@ -2603,7 +2193,6 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
 	    uni_multi = UNICAST;
 	}
     }
-#endif
 /* end multicast */
 
 /* analysis of the last window before the closing of the flow */
@@ -2616,9 +2205,6 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
     {
       if (f_rtp->packets_win[index] != (u_int16_t) (min_val + index))
 	{
-#ifdef LOG_OOO
-	  seg_type = LOST;
-#endif
 	  f_rtp->n_lost++;
 	  f_rtp->burst++;
 	}
@@ -2646,11 +2232,7 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
 		  add_histo (mm_burst_loss_out, f_rtp->burst);
 		}
 	    }
-#ifndef LOG_UNKNOWN
           else if (pup->internal_src && pup->internal_dst)
-#else
-          else
-#endif
 	    {
 	      add_histo (mm_burst_loss_loc, f_rtp->burst);
 	    }
@@ -2658,67 +2240,6 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
 	}
     }
 
-#ifdef LOG_OOO
-  if (seg_type != IN_SEQ)
-    {
-      wfprintf (fp_dup_ooo_log, "R: %f ",
-	       (elapsed (first_packet, current_time) / 1000.0));
-
-      if (dir == C2S)
-	{
-	  if (pup->crypto_src==FALSE)
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostName (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	  else
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostNameEncrypted (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	  if (pup->crypto_dst==FALSE)
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostName (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	  else
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostNameEncrypted (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	}
-      else
-	{
-	  if (pup->crypto_dst==FALSE)
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostName (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	  else
-	     wfprintf (fp_dup_ooo_log, "%d %d %s %s",
-		   PROTOCOL_UDP,
-		   RTP_PROTOCOL,
-		   HostNameEncrypted (pup->addr_pair.b_address),
-		   ServiceName (pup->addr_pair.b_port));
-	  if (pup->crypto_src==FALSE)
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostName (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	  else
-	     wfprintf (fp_dup_ooo_log,
-		   " %s %s",
-		   HostNameEncrypted (pup->addr_pair.a_address),
-		   ServiceName (pup->addr_pair.a_port));
-	}
-      wfprintf (fp_dup_ooo_log, " %d %d %d\n",
-	       seg_type, pup->internal_src, pup->internal_dst);
-
-    }
-#endif
 
   if (pup->internal_src && !pup->internal_dst)
     {
@@ -2856,11 +2377,7 @@ update_rtp_conn_histo (ucb * thisdir, int dir)
 
 	}
     }
-#ifndef LOG_UNKNOWN
   else if (pup->internal_src && pup->internal_dst)
-#else
-  else
-#endif
     {
       /* topix */
       add_histo (mm_cl_b_loc, f_rtp->data_bytes);
@@ -2963,11 +2480,7 @@ update_rtcp_conn_histo (ucb * thisdir, int dir)
 
 	}
     }
-#ifndef LOG_UNKNOWN
   else if (pup->internal_src && pup->internal_dst)
-#else
-  else
-#endif
     {
       add_histo (rtcp_t_lost_loc, f_rtcp->c_lost);
       add_histo (rtcp_bt_loc, (double) data_bytes / etime * 8.0);
@@ -2986,11 +2499,7 @@ or in the  LITTLE ENDIAN one */
 u_int16_t
 swap16 (u_int16_t val)
 {
-#ifdef RTP_LITTLE_ENDIAN
   return ((val & 0xff00) >> 8) | ((val & 0x00ff) << 8);
-#else
-  return val;
-#endif
 }
 
 /* function used to interprete the 24 bit values whether in the BIG ENDIAN case
@@ -3000,7 +2509,6 @@ int32_t
 swap24 (u_int32_t val)
 {
   u_int32_t ret;
-#ifdef RTP_LITTLE_ENDIAN
   ret =
     ((val & 0x00ff0000) >> 16) |
     (val & 0x0000ff00) | ((val & 0x000000ff) << 16);
@@ -3010,9 +2518,6 @@ swap24 (u_int32_t val)
     }
   else
     return ret;
-#else
-  return val;
-#endif /* ; */
 }
 
 /* function used to interprete the 32 bit values whether in the BIG ENDIAN case
@@ -3022,14 +2527,6 @@ u_int32_t
 swap32 (u_int32_t val)
 {
   return (ntohl (val));
-#ifdef RTP_LITTLE_ENDIAN
-  return
-    ((val & 0xff000000) >> 24) |
-    ((val & 0x00ff0000) >> 8) |
-    ((val & 0x0000ff00) << 8) | ((val & 0x000000ff) << 24);
-#else
-  return val;
-#endif
 }
 
 

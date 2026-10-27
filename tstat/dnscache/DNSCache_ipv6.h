@@ -32,12 +32,6 @@ extern "C"{
 	struct DNS_data_IPv6* getEntry_ipv6(
 			struct my_in6_addr client_ip,
 			struct my_in6_addr server_ip);
-	unsigned char* get_ipv6(
-			struct my_in6_addr,
-			struct my_in6_addr);
-	struct in6_addr* get_dns_server_ipv6(
-			struct my_in6_addr *client_ip,
-			struct my_in6_addr *server_ip);
 #ifdef __cplusplus
 }
 #endif

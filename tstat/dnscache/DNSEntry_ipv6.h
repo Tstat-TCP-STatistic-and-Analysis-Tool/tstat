@@ -73,8 +73,6 @@ public:
 			timeval response_time);
 	DNSEntryIPv6();
 	virtual ~DNSEntryIPv6();
-	unsigned char* getHostname();
-	struct in6_addr* getDNSServer();
 	struct DNS_data_IPv6* getDNSData();
 };
 

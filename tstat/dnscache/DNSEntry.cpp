@@ -32,20 +32,6 @@ void DNSEntry::deleteReferences(IPHashtable& ip_hashtable){
 	destroyEntry();
 }
 
-//unsigned long int DNSEntry::getDNSServer(){
-//	return *this->dns_server;
-//}
-
-struct in_addr* DNSEntry::getDNSServer(){
-	return this->dns_server;
-}
-
-
-unsigned char* DNSEntry::getHostname(){
-    char *fqdn = strdup((const char *)hostname);
-	return (unsigned char *)fqdn;
-}
-
 struct DNS_data* DNSEntry::getDNSData()
 {
 	dns_data.hostname = strdup((const char *)hostname);

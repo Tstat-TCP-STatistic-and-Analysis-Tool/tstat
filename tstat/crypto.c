@@ -1,10 +1,6 @@
-#include <stdio.h>
 #include <assert.h>
-#include <unistd.h>
-#include <string.h>
 #include "panon.h"
 #include "tstat.h"
-#include "crypto.h"
 #include "base64.h"
 
 /* Redefine the initial hash size to a large value, to avoid/reduce the automatic rehashing */
@@ -17,9 +13,6 @@
 
 #include "uthash.h" /* Include the generic hash table */
 
-#ifndef MAX_CRYPTO_CACHE_SIZE
-#define MAX_CRYPTO_CACHE_SIZE HASH_INITIAL_NUM_BUCKETS
-#endif
 
 #define KEY_SIZE 32
 
@@ -29,18 +22,14 @@ struct key_hashT {
   UT_hash_handle hh;
 };
 
-#ifdef SUPPORT_IPV6
 struct key6_hashT {
   struct in6_addr key;
   struct in6_addr cpan_addr;
   UT_hash_handle hh;
 };
-#endif
 
 struct key_hashT *address_hash = NULL;
-#ifdef SUPPORT_IPV6
 struct key6_hashT *address6_hash = NULL;
-#endif
 
 void add_address(in_addr_t src, in_addr_t cpan_addr) {
     struct key_hashT *s,*tmp_entry;
@@ -63,7 +52,6 @@ void add_address(in_addr_t src, in_addr_t cpan_addr) {
       }
 }
 
-#ifdef SUPPORT_IPV6
 void add_address6(struct in6_addr *src, struct in6_addr *cpan_addr) {
     struct key6_hashT *s,*tmp_entry;
 
@@ -84,7 +72,6 @@ void add_address6(struct in6_addr *src, struct in6_addr *cpan_addr) {
 	 }
       }
 }
-#endif
 
 struct key_hashT *find_address(in_addr_t src) {
     struct key_hashT *s;
@@ -101,7 +88,6 @@ struct key_hashT *find_address(in_addr_t src) {
     return s;
 }
 
-#ifdef SUPPORT_IPV6
 struct key6_hashT *find_address6(struct in6_addr *src) {
     struct key6_hashT *s;
 
@@ -116,12 +102,9 @@ struct key6_hashT *find_address6(struct in6_addr *src) {
      }
     return s;
 }
-#endif
 
 int crypto_total_hit,crypto_total_insert,crypto_total_miss;
-#ifdef SUPPORT_IPV6
 int crypto_total_hit_ipv6,crypto_total_insert_ipv6,crypto_total_miss_ipv6;
-#endif
 
 void initialize_crypto(int key_source, char *value, char *basenamedir)
 {
@@ -134,9 +117,7 @@ void initialize_crypto(int key_source, char *value, char *basenamedir)
   char *decoded_key = NULL;
   int flen,i;
   in_addr_t ip1,ip2;
-#ifdef SUPPORT_IPV6
   struct in6_addr ip6_1,ip6_2;
-#endif
 
   key = (char *) malloc(sizeof(char) * KEY_SIZE);
   memset(key,0,KEY_SIZE*sizeof(char));
@@ -379,7 +360,6 @@ void initialize_crypto(int key_source, char *value, char *basenamedir)
   crypto_total_insert = 1;
   crypto_total_miss = 0;
 
-#ifdef SUPPORT_IPV6
   /* Insert one address (::) just to inizialize the hash to the full size */
   inet_pton(AF_INET6,"::",&ip6_1);
   encrypt_ipv6(&ip6_2,&ip6_1);
@@ -388,7 +368,6 @@ void initialize_crypto(int key_source, char *value, char *basenamedir)
   crypto_total_hit_ipv6    = 0;
   crypto_total_insert_ipv6 = 1;
   crypto_total_miss_ipv6   = 0;
-#endif
   
   
   if (enc_key!=NULL) free(enc_key);
@@ -455,7 +434,6 @@ in_addr_t retrieve_crypto_ip(struct in_addr *address)
   }
 }
 
-#ifdef SUPPORT_IPV6
 void encrypt_ipv6(struct in6_addr *enc_addr,struct in6_addr *orig_addr)
 {
   /*
@@ -514,14 +492,12 @@ struct in6_addr *retrieve_crypto_ipv6(struct in6_addr *address)
   }
 }
 
-#endif
 
 char *HostNameEncrypted(ipaddr ipaddress)
 {
   char *adr;
   ipaddr encrypted;
 
-#ifdef SUPPORT_IPV6
   if (ADDR_ISV6 (&ipaddress))
     {
       encrypted.addr_vers = 6;
@@ -530,7 +506,6 @@ char *HostNameEncrypted(ipaddr ipaddress)
       return (adr);
     }
   else
-#endif
     {
       encrypted.addr_vers = 4;
       encrypted.un.ip4.s_addr = retrieve_crypto_ip(&(ipaddress.un.ip4));
