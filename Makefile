@@ -11,10 +11,10 @@
 #   make install       install tstat (and libtstat, if built) under PREFIX
 #   make clean
 #
-# Options:
-#   RRD_THREADED=1     write the RRD files from a separate thread
-#                      (useful for libtstat used by the DPDK wrapper)
-#   PACKET_STATS=1     log statistics on the first segments of each flow
+# Options (both enabled by default, set them to 0 to disable):
+#   RRD_THREADED=0     write the RRD files from the main thread, instead of
+#                      a separate thread (useful for libtstat and tstat-dpdk)
+#   PACKET_STATS=0     do not log statistics on the first segments of each flow
 #                      (extra columns in log_tcp_complete and log_udp_complete)
 #
 # Options are compiled in the objects: run "make clean" when changing them.
@@ -25,6 +25,8 @@ CC         ?= gcc
 CXX        ?= g++
 CFLAGS     ?= -O2 -g
 CXXFLAGS   ?= -O2 -g
+RRD_THREADED ?= 1
+PACKET_STATS ?= 1
 
 DEFINES  = -D_DEFAULT_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE
 DEFINES += -DBUILT_USER="\"$(shell whoami)\""

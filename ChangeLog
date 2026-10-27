@@ -41,7 +41,8 @@
     and RRDtool are always compiled in
   * Removed the generation of gzip compressed logs (-Z) and dumps (-P)
   * Replaced autotools with a plain Makefile (Ubuntu/Linux only); PACKET_STATS and
-    RRD_THREADED are optional build flags (make PACKET_STATS=1 RRD_THREADED=1)
+    RRD_THREADED are enabled by default and can be disabled with
+    make PACKET_STATS=0 RRD_THREADED=0
   * Obsolete parameters in the runtime (-T) and global (-G) configuration files are
     ignored with a warning
 14/06/24 - MMM

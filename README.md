@@ -27,13 +27,18 @@ Then build and install:
   sudo make install     # installs tstat (and libtstat, if built) under /usr/local
 ```
 
-Build options (run `make clean` when changing them):
-- `RRD_THREADED=1`: write the RRD files from a separate thread (suggested for libtstat used by tstat-dpdk)
-- `PACKET_STATS=1`: log statistics on the first segments of each flow (extra columns in `log_tcp_complete` and `log_udp_complete`)
+Build options, both enabled by default (set them to 0 to disable them, and run `make clean` when changing them):
+- `RRD_THREADED`: write the RRD files from a separate thread (suggested for libtstat used by tstat-dpdk)
+- `PACKET_STATS`: log statistics on the first segments of each flow (extra columns in `log_tcp_complete` and `log_udp_complete`)
 
-For example, to build libtstat for [tstat-dpdk](https://github.com/Tstat-TCP-STatistic-and-Analysis-Tool/tstat-dpdk):
+For example, to build tstat without them:
 ```
-  make libtstat RRD_THREADED=1 PACKET_STATS=1
+  make RRD_THREADED=0 PACKET_STATS=0
+```
+
+To build and install libtstat for [tstat-dpdk](https://github.com/Tstat-TCP-STatistic-and-Analysis-Tool/tstat-dpdk):
+```
+  make all libtstat
   sudo make install && sudo ldconfig
 ```
 
