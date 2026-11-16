@@ -55,9 +55,21 @@ LIB_OBJS   = $(C_SRCS:%.c=$(LIB_OBJDIR)/%.o) $(CXX_SRCS:%.cpp=$(LIB_OBJDIR)/%.o)
 
 LIBTSTAT_VERSION = 1.0.0
 
-.PHONY: all libtstat demo install clean
+.PHONY: all libtstat demo install clean test test-pcap
 
 all: tstat/tstat
+
+test: build/test_quic
+	./build/test_quic
+
+test-pcap: tstat/tstat
+	python3 tests/test_quic_pcap.py ./tstat/tstat
+	python3 tests/test_quic_pcap.py ./tstat/tstat --ipv6
+
+build/test_quic: tests/test_quic.c tests/fixtures/* $(SRCDIR)/udpL7.c $(wildcard $(SRCDIR)/*.h) $(SRCDIR)/udp.c $(SRCDIR)/rfc6234/*.c
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(DEFINES) $(CFLAGS) $(WARNINGS) -ffunction-sections -fdata-sections \
+	    $(LDFLAGS) -Wl,--gc-sections -o $@ tests/test_quic.c $(SRCDIR)/udp.c $(SRCDIR)/rfc6234/*.c $(LIBS)
 
 tstat/tstat: $(EXE_OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS)
