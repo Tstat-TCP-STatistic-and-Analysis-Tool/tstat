@@ -4,6 +4,8 @@
 
 regex_t re_ssl_subject, re_ssl_clean;
 
+regex_t re_ssl_subject, re_ssl_clean;
+
 static void test_varints(void)
 {
     static const struct {
@@ -207,12 +209,101 @@ static void test_control_packets(void)
     }
 }
 
+static size_t crypto_frame(unsigned char *frame, size_t offset,
+                           const unsigned char *data, size_t len)
+{
+    frame[0] = 6;
+    frame[1] = 0x40 | (offset >> 8);
+    frame[2] = offset & 0xff;
+    frame[3] = 0x40 | (len >> 8);
+    frame[4] = len & 0xff;
+    memcpy(frame + 5, data, len);
+    return 5 + len;
+}
+
+static void test_crypto_and_client_hello(void)
+{
+    /* RFC 9001 Appendix A.2: CRYPTO frame containing example.com's ClientHello. */
+    unsigned char crypto[512], frame[512], hello[512];
+    size_t len = 0, n;
+    unsigned int byte;
+    FILE *fixture = fopen("tests/fixtures/rfc9001-client-crypto.hex", "r");
+    assert(fixture != NULL);
+    while (fscanf(fixture, "%2x", &byte) == 1) {
+        assert(len < sizeof(crypto));
+        crypto[len++] = byte;
+    }
+    fclose(fixture);
+    assert(len == 245);
+    const size_t hello_len = len - 4;
+    memcpy(hello, crypto + 4, hello_len);
+
+    udp_pair pair = {0};
+    pair.c2s.pup = &pair;
+    n = crypto_frame(frame, 64, hello + 64, hello_len - 64);
+    accumulate_QUIC_crypto(&pair, frame, n);
+    search_QUIC_SNI(&pair.c2s);
+    assert(pair.quic_client_hello_len == 0 && pair.quic_sni_name == NULL);
+    n = crypto_frame(frame, 0, hello, 64);
+    accumulate_QUIC_crypto(&pair, frame, n);
+    search_QUIC_SNI(&pair.c2s);
+    assert(pair.quic_client_hello_len == hello_len);
+    assert(strcmp(pair.quic_sni_name, "example.com") == 0);
+    /* A conflicting retransmission must not overwrite previously received bytes. */
+    unsigned char conflict = hello[30] ^ 1;
+    n = crypto_frame(frame, 30, &conflict, 1);
+    accumulate_QUIC_crypto(&pair, frame, n);
+    assert(pair.quic_client_hello->data[30] == hello[30]);
+    free(pair.quic_sni_name);
+    free(pair.quic_client_hello);
+
+    for (n = 0; n < hello_len; n++) {
+        memset(&pair, 0, sizeof(pair));
+        pair.c2s.pup = &pair;
+        size_t frame_len = crypto_frame(frame, 0, hello, n);
+        accumulate_QUIC_crypto(&pair, frame, frame_len);
+        search_QUIC_SNI(&pair.c2s);
+        assert(pair.quic_sni_name == NULL);
+        free(pair.quic_client_hello);
+    }
+    /* Signed session length, oversized extension, and SNI escaping its extension. */
+    const size_t invalid_positions[] = {38, 51, 56};
+    for (n = 0; n < sizeof(invalid_positions) / sizeof(invalid_positions[0]); n++) {
+        memcpy(hello, crypto + 4, hello_len);
+        hello[invalid_positions[n]] = 0xff;
+        memset(&pair, 0, sizeof(pair));
+        pair.c2s.pup = &pair;
+        size_t frame_len = crypto_frame(frame, 0, hello, hello_len);
+        accumulate_QUIC_crypto(&pair, frame, frame_len);
+        search_QUIC_SNI(&pair.c2s);
+        assert(pair.quic_sni_name == NULL && pair.quic_ua_string == NULL);
+        free(pair.quic_client_hello);
+    }
+    memset(&pair, 0, sizeof(pair));
+    const unsigned char huge_offset[] = {6, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0};
+    accumulate_QUIC_crypto(&pair, huge_offset, sizeof(huge_offset));
+    assert(pair.quic_client_hello == NULL);
+    const unsigned char short_offset[] = {6, 0xc0, 0, 0, 0, 0, 0, 0};
+    for (n = 1; n <= sizeof(short_offset); n++) {
+        accumulate_QUIC_crypto(&pair, short_offset, n);
+        assert(pair.quic_client_hello == NULL);
+    }
+    n = crypto_frame(frame, QUIC_MAX_ACCUL - 1, crypto, 2);
+    accumulate_QUIC_crypto(&pair, frame, n);
+    assert(pair.quic_client_hello == NULL);
+}
+
 int main(void)
 {
+    assert(regcomp(&re_ssl_subject, "^[a-z0-9.-]+$", REG_EXTENDED) == 0);
+    assert(regcomp(&re_ssl_clean, "^[a-z0-9.-]+$", REG_EXTENDED) == 0);
     test_varints();
     test_headers();
     test_token_boundaries();
     test_control_packets();
-    puts("QUIC varint and header tests passed");
+    test_crypto_and_client_hello();
+    regfree(&re_ssl_subject);
+    regfree(&re_ssl_clean);
+    puts("QUIC parser tests passed");
     return 0;
 }

@@ -263,37 +263,92 @@ static const unsigned char *quic_initial_salt(const uint8_t *version){
     return NULL;
 }
 
-static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int data_len, int payload_offset, quic_hdr hdr  ){
-    
-    /* Parameter payload_offset represents the starting of the payload if Packet Number is on 1 Byte
-       It is update consequently after reading the packet number. */
-    
-    int err;
+struct quic_crypto_buffer {
+    unsigned char data[QUIC_MAX_ACCUL];
+    unsigned char received[(QUIC_MAX_ACCUL + 7) / 8];
+};
+
+static void accumulate_QUIC_crypto(udp_pair *pup, const unsigned char *data, size_t len){
+    size_t pos = 0, consumed;
+    uint64_t type, offset, length;
+
+    while (pos < len){
+        if (!read_var_len_int(data + pos, len - pos, &type, &consumed))
+            return;
+        pos += consumed;
+        if (type == 0 || type == 1) /* PADDING or PING */
+            continue;
+        if (type != 6) /* Stop at a frame we cannot skip safely. */
+            return;
+        if (!read_var_len_int(data + pos, len - pos, &offset, &consumed))
+            return;
+        pos += consumed;
+        if (!read_var_len_int(data + pos, len - pos, &length, &consumed))
+            return;
+        pos += consumed;
+        if (length > len - pos || offset > QUIC_MAX_ACCUL ||
+            length > QUIC_MAX_ACCUL - offset)
+            return;
+        if (length != 0){
+            struct quic_crypto_buffer *buffer = pup->quic_client_hello;
+            if (buffer == NULL){
+                buffer = calloc(1, sizeof(*buffer));
+                if (buffer == NULL)
+                    return;
+                pup->quic_client_hello = buffer;
+            }
+            /* Retransmitted bytes must agree with the bytes already collected. */
+            size_t i;
+            for (i = 0; i < length; i++){
+                size_t at = (size_t)offset + i;
+                if ((buffer->received[at / 8] & (1u << (at % 8))) &&
+                    buffer->data[at] != data[pos + i])
+                    return;
+            }
+            memcpy(buffer->data + offset, data + pos, (size_t)length);
+            for (i = 0; i < length; i++){
+                size_t at = (size_t)offset + i;
+                buffer->received[at / 8] |= 1u << (at % 8);
+            }
+            while (pup->quic_client_hello_len < QUIC_MAX_ACCUL){
+                size_t at = pup->quic_client_hello_len;
+                if (!(buffer->received[at / 8] & (1u << (at % 8))))
+                    break;
+                pup->quic_client_hello_len++;
+            }
+        }
+        pos += (size_t)length;
+    }
+}
+
+static void search_QUIC_client_hello(ucb *thisdir, const unsigned char *data,
+                                      const quic_hdr *hdr){
+    int err, plaintext_len, len;
     EVP_CIPHER_CTX *ctx;
-    int plaintext_len;
-    unsigned char plaintext [QUIC_MAX_PKT];
-    unsigned char client_hello [QUIC_MAX_ACCUL];
-    int conn_id_len = hdr.dcid_len;
-    // Check UDP packet long enough. Will read up to payload_offset + 3 B
-    if (payload_offset+3 > data_len || payload_offset<19)
+    unsigned char plaintext[QUIC_MAX_PKT], mask[16];
+    size_t pn_offset = hdr->packet_number_offset;
+    size_t packet_end = hdr->packet_end;
+    int conn_id_len = hdr->dcid_len;
+
+    /* Header protection samples 16 bytes starting four bytes after PN offset. */
+    if (hdr->packet_type != 0 || packet_end - pn_offset < 20)
         return;
-        
     // Get initial secrets [RFC 9001, Section 5.4.1]
     // Example in Appendix from https://datatracker.ietf.org/doc/html/rfc9001
     
     // The salt depends on the version. Must be updated in future versions
-    const unsigned char *salt = quic_initial_salt(hdr.version);
+    const unsigned char *salt = quic_initial_salt(hdr->version);
     if (salt == NULL)
         return;
 
     /* HKDF-{Extract,Expand} Functions from TLS 1.3 [RFC 8446 Section 7.1 and RFC 5869 Section 2.2 and 2.3] */
-    unsigned char initial_secret[SHA256HashSize];
-    err = hkdfExtract(SHA256, salt, 20, thisdir->QUIC_conn_id, conn_id_len, initial_secret);
+    unsigned char initial_secret[USHAMaxHashSize];
+    err = hkdfExtract(SHA256, salt, 20, (const unsigned char *)thisdir->QUIC_conn_id, conn_id_len, initial_secret);
     if (err !=0)
       return;
     
     /* Client Initial Secret */
-    static const char HkdfLabel_client_initial_secret[19] =
+    static const unsigned char HkdfLabel_client_initial_secret[19] =
         {0x00, 0x20, 0x0F, 't', 'l', 's', '1', '3', ' ', 'c', 'l', 'i', 'e', 'n', 't', ' ', 'i', 'n', 0x00};
     unsigned char client_initial_secret[32];     
     err = hkdfExpand(SHA256, initial_secret, 32, HkdfLabel_client_initial_secret, 19,
@@ -302,7 +357,7 @@ static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int da
         return;
 
     //  Key
-    static const char HkdfLabel_key[18] =
+    static const unsigned char HkdfLabel_key[18] =
         {0x00, 0x10, 0x0E, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'k', 'e', 'y', 0x00};    
     unsigned char key[16];  
     err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_key, 18,
@@ -311,7 +366,7 @@ static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int da
         return;
 
     // Initialization Vector
-    static const char HkdfLabel_iv[17] =
+    static const unsigned char HkdfLabel_iv[17] =
         {0x00, 0x0C, 0x0D, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'i', 'v', 0x00};
         
     unsigned char iv[12];  
@@ -321,7 +376,7 @@ static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int da
         return;
 
     // Header Protection
-    static const char HkdfLabel_hp[17] =
+    static const unsigned char HkdfLabel_hp[17] =
         {0x00, 0x10, 0x0D, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'h', 'p', 0x00};
     unsigned char hp[16];  
     err = hkdfExpand(SHA256, client_initial_secret, SHA256HashSize, HkdfLabel_hp, 17,
@@ -330,277 +385,149 @@ static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int da
         return;
 
 
-    /* Mask obtained from encrypting first 16B with 'hp', but assuming 4B pkt len
-      [RFC 9001, Section 5.4.1, 5.4.2, 5.4.3] */
-    if (payload_offset+3 + 16 > data_len)
-       return;
-    
-    EVP_CIPHER_CTX *ctx_mask;
-
-    if (!(ctx_mask = EVP_CIPHER_CTX_new()))
+    ctx = EVP_CIPHER_CTX_new();
+    if (ctx == NULL)
         return;
-
-    if (1 != EVP_EncryptInit_ex(ctx_mask, EVP_aes_128_cbc(), NULL, hp, 0)){
-        EVP_CIPHER_CTX_free(ctx_mask);
-        return;
-    }
-
-    int len = 0;
-    if (1 != EVP_EncryptUpdate(ctx_mask, plaintext, &len, data+payload_offset+3, 16)){
-        EVP_CIPHER_CTX_free(ctx_mask);
-        return;
-    }
-
-    EVP_CIPHER_CTX_free(ctx_mask);
-    
-    /* Paccket numbers on 1, 2, 3 or 4B. Length of the Packet Number field is encrypted
-       Using header protecion [RFC 9001, Section 5.4.1] */
-    uint32_t pkn;
-    uint8_t packet_nb_len_decripted = hdr.packet_nb_len ^ (plaintext[0] & 0x03);
-    void * pkn_nb_ptr = data+payload_offset-1 ;
-    if (packet_nb_len_decripted == 0) { // 0 -> 1B
-        pkn = *((uint8_t*)(pkn_nb_ptr)) ^ plaintext[1]; 
-    }
-    else if (packet_nb_len_decripted == 1) { // 1 -> 2B
-        pkn = ntohs ( *((uint16_t*)(pkn_nb_ptr))  ^  *((uint16_t*)(plaintext+1)) ); 
-        payload_offset += 1; // Increase by 1 start of payload as pkn is 2B
-    }
-    else if (packet_nb_len_decripted == 2) { // 2 -> 3B
-        pkn = *((uint32_t*)(pkn_nb_ptr));
-        uint32_t plaintext_24b = *((uint32_t*)(plaintext+1));
-        pkn = ntohl((pkn ^ plaintext_24b) & 0x00FFFFFF) >> 8 ; 
-        payload_offset += 2; // Increase by 2 start of payload as pkn is 3B
-    }
-    else if (packet_nb_len_decripted == 3) { // 3 -> 4B
-        pkn = ntohl ( *((uint32_t*)(pkn_nb_ptr))  ^  *((uint32_t*)(plaintext+1)) ) ; 
-        payload_offset += 3; // Increase by 3 start of payload as pkn is 4B
-    }
-
-    /* Make XOR of packet numbe [RFC 9001, Section 5.3, paragraph 5 ]
-       or https://github.com/NanXiao/code-for-my-blog/blob/master/2020/09/quic_server_initial/main.c */
-    //iv[11] = iv[11] ^ pkn; // works only for 1B pkt nb  
-    *(uint32_t*) (iv + 8) =  *(uint32_t*) (iv + 8) ^ htonl(pkn);
-
-    /* Decrypt Payload */
-    /* Sample code: https://wiki.openssl.org/index.php/EVP_Authenticated_Encryption_and_Decryption*/  
-    if(!(ctx = EVP_CIPHER_CTX_new()))
-        return;
-    if(!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, iv)){
-        EVP_CIPHER_CTX_free(ctx);
-        return;
-    }  
-    if(!EVP_DecryptUpdate(ctx, plaintext, &plaintext_len, data+payload_offset, data_len - payload_offset)){ 
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, hp, NULL) != 1 ||
+        EVP_EncryptUpdate(ctx, mask, &len, data + pn_offset + 4, 16) != 1){
         EVP_CIPHER_CTX_free(ctx);
         return;
     }
-
-    /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
 
-    // Process plain text
-    unsigned char * ptr = &plaintext[0];
-    int iterations = 0;
+    size_t pn_len = (hdr->packet_nb_len ^ (mask[0] & 3)) + 1;
+    size_t payload_offset = pn_offset + pn_len;
+    size_t ciphertext_len = packet_end - payload_offset - 16;
+    /* Oversized Initials remain classifiable, but cannot supply metadata. */
+    if (ciphertext_len > sizeof(plaintext))
+        return;
+    uint32_t pkn = 0;
+    size_t i;
+    for (i = 0; i < pn_len; i++)
+        pkn = (pkn << 8) | (data[pn_offset + i] ^ mask[i + 1]);
+    for (i = 0; i < 4; i++)
+        iv[sizeof(iv) - 1 - i] ^= (unsigned char)(pkn >> (i * 8));
 
-    // Pre fill in case is not the first packet
-    if (thisdir->pup->quic_client_hello != NULL)
-        memcpy(client_hello, thisdir->pup->quic_client_hello, thisdir->pup->quic_client_hello_len);
-    else 
-        memset(client_hello, 0xFF, QUIC_MAX_ACCUL); /*Set buffer to one */
-
-    /* Accumulate fragments in CRYPTO messages */
-    while (plaintext_len >= 16 && ptr < plaintext + plaintext_len - 16 &&
-           iterations <= QUIC_MAX_PKT){
-        iterations ++; /* Avoid infinite loops */
-        if ( *ptr == 0x01 || *ptr == 0x00)// PING or PADDING
-            ptr++;
-
-        else if ( *ptr == 0x06 ){ //CRYPTO
-            size_t delta, delta_tot = 0;
-            size_t remaining = plaintext + plaintext_len - 16 - (ptr + 1);
-            uint64_t offset, length;
-            if (!read_var_len_int(ptr + 1, remaining, &offset, &delta))
-                break;
-            delta_tot += delta ;
-            if (!read_var_len_int(ptr + 1 + delta_tot, remaining - delta_tot,
-                                  &length, &delta))
-                break;
-
-            delta_tot += delta ;
-            if (length > remaining - delta_tot || offset > QUIC_MAX_ACCUL ||
-                length > QUIC_MAX_ACCUL - offset)
-               break;
-            memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
-            ptr=ptr + 1 + delta_tot+length;
-        }
-        else{ // UNKNOWN FRAME
-          break;
-        }
+    /* As before, metadata is extracted without verifying the AEAD tag. */
+    ctx = EVP_CIPHER_CTX_new();
+    if (ctx == NULL)
+        return;
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, iv) != 1 ||
+        EVP_DecryptUpdate(ctx, plaintext, &plaintext_len, data + payload_offset,
+                          (int)ciphertext_len) != 1){
+        EVP_CIPHER_CTX_free(ctx);
+        return;
     }
-    
-    /* Set the length of read bytes to QUIC_MAX_ACCUL */        
-    thisdir->pup->quic_client_hello_len = QUIC_MAX_ACCUL;
-    
-    /* Allocate the memory it it is the first packet */  
-    if (thisdir->pup->quic_client_hello == NULL){
-        thisdir->pup->quic_client_hello = malloc (thisdir->pup->quic_client_hello_len);
-        if (thisdir->pup->quic_client_hello == NULL)
-          return;
-    }
-    
-    /* Copy in the pup's field  */  
-    memcpy(thisdir->pup->quic_client_hello, client_hello,thisdir->pup->quic_client_hello_len);                
+    EVP_CIPHER_CTX_free(ctx);
+    accumulate_QUIC_crypto(thisdir->pup, plaintext, (size_t)plaintext_len);
+}
 
+static unsigned int quic_u16(const unsigned char *data){
+    return ((unsigned int)data[0] << 8) | data[1];
 }
 
 static void search_QUIC_SNI(ucb *thisdir){
-                
-    // Parsing TLC Client Hello. Inspired from tcpL7.c
-    int idx = 38; // Was 43 in tcpL7.c, but need to subtract 5
-    char * client_hello = thisdir->pup->quic_client_hello;
-    int max_length = thisdir->pup->quic_client_hello_len;
-                
-    // Add session length = 1st byte of cipher suite section
-    if (idx > max_length) 
-      return;
-    
-    idx += 1 + client_hello[idx];
+    udp_pair *pup = thisdir->pup;
+    const struct quic_crypto_buffer *buffer = pup->quic_client_hello;
+    if (buffer == NULL || pup->quic_client_hello_len < 4)
+        return;
+    const unsigned char *data = buffer->data;
+    size_t hello_len = 4 + ((size_t)data[1] << 16) + ((size_t)data[2] << 8) + data[3];
+    if (data[0] != 1 || hello_len > pup->quic_client_hello_len || hello_len < 38)
+        return;
 
-    // Add length of cipher suite section = 1st byte of compression section
-    if (idx + 2 > max_length) 
-      return;
-    
-    idx += 2 + ntohs(*(tt_uint16 *)(client_hello+idx)); 
+    size_t pos = 38, length;
+    if (pos == hello_len)
+        return;
+    length = data[pos++]; /* legacy_session_id */
+    if (length > 32 || length > hello_len - pos)
+        return;
+    pos += length;
+    if (hello_len - pos < 2)
+        return;
+    length = quic_u16(data + pos); /* cipher_suites */
+    pos += 2;
+    if (length < 2 || length % 2 != 0 || length > hello_len - pos)
+        return;
+    pos += length;
+    if (hello_len - pos < 2 || data[pos] != 1 || data[pos + 1] != 0)
+        return; /* TLS 1.3 legacy_compression_methods = {0}. */
+    pos += 2;
+    if (hello_len - pos < 2 || quic_u16(data + pos) != hello_len - pos - 2)
+        return;
+    pos += 2;
 
-    // Add length of compression section = 1st byte of extensions section
-    if (idx > max_length)
-      return;
-    
-    idx += 1 + client_hello[idx];
-
-    // Full extensions section length
-    if (idx + 2 > max_length) 
-      return;
-    
-    int all_ext_len = ntohs(*(tt_uint16 *)(client_hello+idx));
-    if (all_ext_len < 0)
-      return;
-    
-    idx += 2; 
-
-    // From tcpL7.c
-    int ii = 0;   // pointer within the current extension
-    int next = 0;
-    char cname[81];
-    int ext_type, ext_len, name_len, j, this_ii;
-    int iterations;
-
-    while (ii < all_ext_len && idx+ii < max_length){
-        // extract extension type
-        if (idx+ii+2 > max_length) 
-          return;
-        ext_type = ntohs(*(tt_uint16 *)(client_hello+idx+ii));
-        ii += 2;
-
-        // extract extension length
-        if (idx + ii + 2 > max_length) 
-          return;
-        ext_len = ntohs(*(tt_uint16 *)(client_hello + idx + ii));
-        if (ext_len < 0)
-          return;
-        ii += 2;
-
-        switch (ext_type)
-         {
-            // SNI (Server Name Indication)
-            case 0x0000:
-
-                // extension length
-                if (idx+ii+2 > max_length) 
-                  return;
-                next = ii + ext_len;
-
-                // skip up to the 1st byte of "Server Name"
-                ii += 3;
-                if (idx+ii+2 > max_length) 
-                  return;
-                name_len = ntohs(*(tt_uint16 *)(client_hello+idx+ii));
-                ii += 2;
-
-                // copy server name
-                if (idx+ii > max_length) 
-                  return;
-                for (j=0; j < name_len && j < 79 && idx+ii+j < max_length; j++)
-                 {
-                    cname[j]=client_hello[idx+ii+j];
-                 }
-                cname[j]='\0';
-
-                // Check if length do not match (could have read truncated SNI)
-                if ( strlen(cname) != name_len )
+    char sni[80] = {0}, ua[81] = {0};
+    int have_sni = 0, have_ua = 0, have_ech = 0;
+    unsigned int ech_len = 0;
+    while (pos < hello_len){
+        if (hello_len - pos < 4)
+            return;
+        unsigned int type = quic_u16(data + pos);
+        size_t ext_len = quic_u16(data + pos + 2);
+        pos += 4;
+        if (ext_len > hello_len - pos)
+            return;
+        const unsigned char *ext = data + pos;
+        size_t at = 0;
+        if (type == 0){ /* ServerNameList */
+            if (ext_len < 2 || quic_u16(ext) != ext_len - 2)
+                return;
+            at = 2;
+            while (at < ext_len){
+                if (ext_len - at < 3)
                     return;
-
-                // crosscheck that subject has a reasonable syntax
-                if (regexec(&re_ssl_subject,cname, (size_t) 0, NULL, 0)==0)
-                {
-                  if (regexec(&re_ssl_clean,cname, (size_t) 0, NULL, 0)==0)
-
-                    if (thisdir->pup->quic_sni_name==NULL){
-                      thisdir->pup->quic_sni_name = url_encode(cname);
-                      //printf("%s\n", thisdir->pup->quic_sni_name);
-                    }
+                unsigned int name_type = ext[at];
+                size_t name_len = quic_u16(ext + at + 1);
+                at += 3;
+                if (name_len == 0 || name_len > ext_len - at)
+                    return;
+                if (name_type == 0){
+                    if (have_sni || name_len >= sizeof(sni) ||
+                        memchr(ext + at, 0, name_len) != NULL)
+                        return;
+                    memcpy(sni, ext + at, name_len);
+                    have_sni = 1;
                 }
-
-                ii = next;
-                break;
-            // QUIC transport parameters. Obsolete, works only for Google QUIC */
-            case 0x0039:
-                this_ii = ii;
-                iterations = 0;
-                while(this_ii < ii + ext_len && this_ii>=0 && iterations <= QUIC_MAX_PKT){
-                    
-                    // Read Type and Len
-                    size_t offset, offset_tot = 0;
-                    uint64_t param_type, param_len;
-                    if (idx + this_ii < 0 || idx + this_ii > max_length)
-                      return;
-                    size_t remaining = max_length - (idx + this_ii);
-                    if (!read_var_len_int((uint8_t *)client_hello + idx + this_ii,
-                                          remaining, &param_type, &offset))
-                      return;
-                    offset_tot +=offset;
-                    if (!read_var_len_int((uint8_t *)client_hello + idx + this_ii + offset_tot,
-                                          remaining - offset_tot, &param_len, &offset))
-                      return;
-                    offset_tot +=offset;
-                    if (param_len > remaining - offset_tot)
-                      return;
-
-                    // Find Google User Agent
-                    if (param_type == 0x3129){
-                        memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
-                        cname[min(80, param_len)]='\0';
-                        if (thisdir->pup->quic_ua_string==NULL)
-                            thisdir->pup->quic_ua_string = url_encode(cname);
-                    }
-                    this_ii += offset_tot + param_len;
-                    iterations ++;
+                at += name_len;
+            }
+        }
+        else if (type == 0x0039){ /* QUIC transport parameters */
+            while (at < ext_len){
+                uint64_t param_type, param_len;
+                size_t consumed;
+                if (!read_var_len_int(ext + at, ext_len - at, &param_type, &consumed))
+                    return;
+                at += consumed;
+                if (!read_var_len_int(ext + at, ext_len - at, &param_len, &consumed))
+                    return;
+                at += consumed;
+                if (param_len > ext_len - at)
+                    return;
+                if (param_type == 0x3129 && !have_ua){
+                    size_t copied = min(sizeof(ua) - 1, param_len);
+                    memcpy(ua, ext + at, copied);
+                    have_ua = 1;
                 }
+                at += (size_t)param_len;
+            }
+        }
+        else if (type == 0xfe0d){
+            have_ech = 1;
+            ech_len = ext_len;
+        }
+        pos += ext_len;
+    }
 
-                ii += ext_len;
-                break;
-            case 0xfe0d: // = 65037 
-            /* From https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml */
-
-                thisdir->pup->quic_ech=ext_len;
-                ii += ext_len;
-                break;
-            default:
-                ii += ext_len;
-                break;
-         }
-     }
-
-    return;                     
+    /* Commit metadata only after the whole ClientHello has passed its bounds checks. */
+    if (have_sni && pup->quic_sni_name == NULL &&
+        regexec(&re_ssl_subject, sni, 0, NULL, 0) == 0 &&
+        regexec(&re_ssl_clean, sni, 0, NULL, 0) == 0)
+        pup->quic_sni_name = url_encode(sni);
+    if (have_ua && pup->quic_ua_string == NULL)
+        pup->quic_ua_string = url_encode(ua);
+    if (have_ech)
+        pup->quic_ech = ech_len;
 }
 
 
@@ -734,8 +661,7 @@ static void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
     ){
 
         if (hdr.packet_type == 0)
-            search_QUIC_client_hello(thisdir, base, data_len,
-                                     8 + hdr.packet_number_offset + 1, hdr);
+            search_QUIC_client_hello(thisdir, base + 8, &hdr);
         search_QUIC_SNI(thisdir);
   }
 
