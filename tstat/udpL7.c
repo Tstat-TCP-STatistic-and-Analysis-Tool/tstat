@@ -42,8 +42,6 @@
 #define QUIC_MAX_PKT 1500
 #define QUIC_MAX_SNI_PKT 10
 
-#define ntohll(x) ((uint64_t)ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32)
-
 extern FILE *fp_udp_logc;
 extern regex_t re_ssl_subject,re_ssl_clean;
 
@@ -205,9 +203,8 @@ typedef struct {
   uint8_t dcid[20]         ;
   uint8_t scid_len         ;
   uint8_t scid[20]         ;
-  uint8_t token_len        ;
-  uint64_t pkt_len         ;
-  uint8_t pkt_len_len      ;
+  size_t packet_number_offset;
+  size_t packet_end;
 } quic_hdr;
 
 
@@ -216,29 +213,22 @@ typedef struct {
    Input: start
    Output: result, offset (in Bytes)
 */
-static uint64_t read_var_len_int(uint8_t * start, uint8_t * offset){
+static int read_var_len_int(const uint8_t *start, size_t remaining,
+                            uint64_t *result, size_t *consumed){
+    size_t len, i;
+    uint64_t value;
 
-    uint8_t type =  *(start) >> 6;
-    uint64_t result;
-    if (type==0x00){
-        result = *( (uint8_t*)(start) )& 0x3F;
-        *offset = 1;
-    }
-    else if (type==0x01){
-        result = ntohs(*( (uint16_t*)(start) )) & 0x3FFF;
-        *offset = 2;
-    }
-    else if (type==0x02){
-        result = ntohl(*( (uint32_t*)(start) )) & 0x3FFFFFFF;
-        *offset = 4;
-    }
-    else if (type==0x03){
-        result = ntohll(*( (uint64_t*)(start) )) & 0x3FFFFFFFFFFFFFFF;
-        *offset = 16;
-    }
-
-    return result;
-
+    if (remaining == 0)
+        return 0;
+    len = (size_t)1 << (start[0] >> 6);
+    if (len > remaining)
+        return 0;
+    value = start[0] & 0x3f;
+    for (i = 1; i < len; i++)
+        value = (value << 8) | start[i];
+    *result = value;
+    *consumed = len;
+    return 1;
 }
 
 
@@ -418,22 +408,26 @@ static void search_QUIC_client_hello(ucb * thisdir, unsigned char * data, int da
         memset(client_hello, 0xFF, QUIC_MAX_ACCUL); /*Set buffer to one */
 
     /* Accumulate fragments in CRYPTO messages */
-    while (ptr < plaintext + plaintext_len - 16 && ptr >= plaintext && iterations <= QUIC_MAX_PKT &&
-           ptr < plaintext + hdr.pkt_len -18 ){
+    while (plaintext_len >= 16 && ptr < plaintext + plaintext_len - 16 &&
+           iterations <= QUIC_MAX_PKT){
         iterations ++; /* Avoid infinite loops */
         if ( *ptr == 0x01 || *ptr == 0x00)// PING or PADDING
             ptr++;
 
         else if ( *ptr == 0x06 ){ //CRYPTO
-            uint8_t delta = 0;
-            uint8_t delta_tot = 0;
-            uint64_t offset = read_var_len_int(ptr + 1 + delta_tot, &delta);
+            size_t delta, delta_tot = 0;
+            size_t remaining = plaintext + plaintext_len - 16 - (ptr + 1);
+            uint64_t offset, length;
+            if (!read_var_len_int(ptr + 1, remaining, &offset, &delta))
+                break;
             delta_tot += delta ;
-            uint64_t length = read_var_len_int(ptr + 1 + delta_tot, &delta);
+            if (!read_var_len_int(ptr + 1 + delta_tot, remaining - delta_tot,
+                                  &length, &delta))
+                break;
 
             delta_tot += delta ;
-            if ((ptr + 1 + delta_tot + length > plaintext + plaintext_len) ||
-                (offset + length > QUIC_MAX_ACCUL))
+            if (length > remaining - delta_tot || offset > QUIC_MAX_ACCUL ||
+                length > QUIC_MAX_ACCUL - offset)
                break;
             memcpy( client_hello + offset, ptr + 1 + delta_tot, length);
             ptr=ptr + 1 + delta_tot+length;
@@ -565,21 +559,24 @@ static void search_QUIC_SNI(ucb *thisdir){
                 while(this_ii < ii + ext_len && this_ii>=0 && iterations <= QUIC_MAX_PKT){
                     
                     // Read Type and Len
-                    uint8_t offset = 0;
-                    uint8_t offset_tot = 0;
-                    if (idx+this_ii+offset_tot + 4 > max_length )
+                    size_t offset, offset_tot = 0;
+                    uint64_t param_type, param_len;
+                    if (idx + this_ii < 0 || idx + this_ii > max_length)
                       return;
-                    uint64_t param_type = read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
-                    offset_tot +=offset;
-                    if (idx+this_ii+offset_tot + 4 > max_length)
+                    size_t remaining = max_length - (idx + this_ii);
+                    if (!read_var_len_int((uint8_t *)client_hello + idx + this_ii,
+                                          remaining, &param_type, &offset))
                       return;
-                    uint64_t param_len =  read_var_len_int(client_hello+idx+this_ii+offset_tot, &offset);
                     offset_tot +=offset;
+                    if (!read_var_len_int((uint8_t *)client_hello + idx + this_ii + offset_tot,
+                                          remaining - offset_tot, &param_len, &offset))
+                      return;
+                    offset_tot +=offset;
+                    if (param_len > remaining - offset_tot)
+                      return;
 
                     // Find Google User Agent
                     if (param_type == 0x3129){
-                        if (idx+this_ii+offset_tot + param_len > max_length && idx+this_ii+offset_tot + param_len >= 0)
-                          return;
                         memcpy(cname, client_hello+idx+this_ii+offset_tot, min(80, param_len));
                         cname[min(80, param_len)]='\0';
                         if (thisdir->pup->quic_ua_string==NULL)
@@ -607,59 +604,52 @@ static void search_QUIC_SNI(ucb *thisdir){
 }
 
 
-static quic_hdr parse_quic_hdr (unsigned char *base, int data_len){
+/* Offsets are relative to the start of the QUIC packet, without the UDP header. */
+static int parse_quic_hdr(const unsigned char *base, size_t data_len, quic_hdr *out){
+    quic_hdr hdr = {0};
+    size_t pos, consumed;
+    uint64_t token_len, packet_len;
 
-    quic_hdr hdr;
-    memset(&hdr, 0, sizeof(hdr));
+    if (data_len < 7 || (base[0] & 0xc0) != 0xc0)
+        return 0;
+    hdr.header_form = 1;
+    hdr.fixed_bit = 1;
+    hdr.packet_type = (base[0] >> 4) & 3;
+    hdr.packet_nb_len = base[0] & 3; /* Still protected. */
+    memcpy(hdr.version, base + 1, 4);
+    if (!(base[1] | base[2] | base[3] | base[4]) || hdr.packet_type == 3)
+        return 0; /* Version Negotiation and Retry do not carry a Length field. */
 
-    /* Notice: The four least significant bits of the first byte are protected for packets with long headers;
-    the five least significant bits of the first byte are protected for packets with short headers. 
-    [RFC 9001, Section 5.4]*/
-    
-    if (data_len<=5)
-      return hdr;
+    pos = 5;
+    hdr.dcid_len = base[pos++];
+    if (hdr.dcid_len > sizeof(hdr.dcid) || hdr.dcid_len >= data_len - pos)
+        return 0;
+    memcpy(hdr.dcid, base + pos, hdr.dcid_len);
+    pos += hdr.dcid_len;
+    hdr.scid_len = base[pos++];
+    if (hdr.scid_len > sizeof(hdr.scid) || hdr.scid_len > data_len - pos)
+        return 0;
+    memcpy(hdr.scid, base + pos, hdr.scid_len);
+    pos += hdr.scid_len;
 
-    hdr.header_form = (base[0] >> 7) & 1;
-    hdr.fixed_bit = (base[0] >> 6) & 1;
-
-    if (hdr.header_form == 1){ // Long Packet
-        hdr.packet_type = (base[0] >> 4) & 0x03;
-        hdr.reserved = (base[0] >> 2) & 0x03;
-        hdr.packet_nb_len = base[0] & 0x03; /* Notice: it is encrypted */
-        memcpy(hdr.version, base + 1, 4);
-
-        hdr.dcid_len = base[5];
-        if ((hdr.dcid_len > 20) || (5 + 1 + hdr.dcid_len >= data_len))
-          return hdr;
-        memcpy(hdr.dcid, base + 5 + 1, hdr.dcid_len);
-
-        hdr.scid_len = base[5 + 1 + hdr.dcid_len];
-        if ((hdr.scid_len > 20) || (5 + 1 + hdr.dcid_len + 1 + hdr.scid_len >= data_len))
-          return hdr;
-        memcpy(hdr.scid, base + 5 + 1 + hdr.dcid_len + 1, hdr.scid_len);
-        
-        // Search token and len only in initial packets
-        if (hdr.packet_type == 0){
-            unsigned char * ptr = base + 5 + 1 + hdr.dcid_len + 1 + hdr.scid_len;
-            uint8_t token_len_len = 0;
-            if ((ptr + 4 >= base + data_len) || (ptr < base))
-              return hdr;
-            uint64_t token_len = read_var_len_int(ptr, &token_len_len);
-            
-            // Include in the token_len field both token len size and token size
-            hdr.token_len = token_len_len + token_len;
-            uint8_t pkt_len_len = 0;
-            ptr += token_len_len + token_len;
-            if ((ptr + 4 >= base + data_len) || (ptr < base))
-              return hdr;
-            hdr.pkt_len = read_var_len_int(ptr, &pkt_len_len);
-            hdr.pkt_len_len = pkt_len_len;
-        }
+    if (hdr.packet_type == 0){
+        if (!read_var_len_int(base + pos, data_len - pos, &token_len, &consumed))
+            return 0;
+        pos += consumed;
+        if (token_len > data_len - pos)
+            return 0;
+        pos += (size_t)token_len;
     }
-    else // Short Packet
-      hdr.spin_bit = (base[0] >> 5) & 1;
-
-    return hdr;
+    if (!read_var_len_int(base + pos, data_len - pos, &packet_len, &consumed))
+        return 0;
+    pos += consumed;
+    /* At least one packet-number byte and the 16-byte authentication tag. */
+    if (packet_len < 17 || packet_len > data_len - pos)
+        return 0;
+    hdr.packet_number_offset = pos;
+    hdr.packet_end = pos + (size_t)packet_len;
+    *out = hdr;
+    return 1;
 }
 
 
@@ -680,8 +670,14 @@ static void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
   base = (unsigned char *) pudp;
   data_len = (unsigned char *) plast - (unsigned char *) base + 1;
 
-  if (data_len < 27 || payload_len == 0)
-    return;  /* Minimum safe QUIC size is probably 8+19 bytes */
+  if (data_len < 8 || payload_len < 8)
+    return;
+  if (data_len > payload_len)
+    data_len = payload_len;
+
+  quic_hdr hdr;
+  if (!parse_quic_hdr(base + 8, (size_t)data_len - 8, &hdr))
+    return;
 
 
   /* New code for Google QUIC Version >= 46 (QUIC IETF) */
@@ -689,9 +685,6 @@ static void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
         /* MATCHING QUIC IETF
            We only have part of the header in clear.
            We match the DCID with SCID and version across "Initial" (or "0-RTT") packets */
-
-        quic_hdr hdr;
-        hdr = parse_quic_hdr(base + 8, data_len - 8);
 
         // Look for initial well-formed packets
         if ( hdr.header_form == 1 && hdr.packet_type == 0 &&
@@ -716,15 +709,12 @@ static void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
                 }
                 
             }
-            // Search 0-RTT
-            unsigned char * ptr_next = base + 17 +
-                                       hdr.dcid_len + hdr.scid_len + hdr.token_len + hdr.pkt_len;
-            if (ptr_next + 5 < base + data_len ){
-                quic_hdr hdr_second = parse_quic_hdr(ptr_next, 5);
-                if (hdr_second.packet_type == 1)
-                    thisdir->pup->quic_zero_rtt+=1;
-            }    
-                    
+            /* A coalesced packet starts after the complete Length-delimited packet. */
+            size_t next = 8 + hdr.packet_end;
+            quic_hdr hdr_second;
+            if (parse_quic_hdr(base + next, data_len - next, &hdr_second) &&
+                hdr_second.packet_type == 1)
+                thisdir->pup->quic_zero_rtt += 1;
         }              
                   
         // Look for inflight 0-rtt
@@ -743,10 +733,9 @@ static void check_QUIC(struct ip * pip, struct udphdr * pudp, void *plast,
           ( thisdir->packets <= QUIC_MAX_SNI_PKT ) )
     ){
 
-        quic_hdr hdr;
-        hdr = parse_quic_hdr(base + 8, data_len - 8);
-        search_QUIC_client_hello(thisdir, base, data_len,
-                                 16 + hdr.dcid_len + hdr.scid_len + hdr.token_len + hdr.pkt_len_len, hdr );
+        if (hdr.packet_type == 0)
+            search_QUIC_client_hello(thisdir, base, data_len,
+                                     8 + hdr.packet_number_offset + 1, hdr);
         search_QUIC_SNI(thisdir);
   }
 
